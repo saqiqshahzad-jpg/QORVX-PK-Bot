@@ -166,7 +166,11 @@ class GoogleSpreadsheetClient:
         self.booking_sheet_name = booking_sheet_name
         self.property_sheet_name = property_sheet_name
         self.scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        self.creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", self.scope)
+        creds_json = os.getenv("GOOGLE_CREDENTIALS")
+        if not creds_json:
+            raise ValueError("GOOGLE_CREDENTIALS environment variable is not set")
+        creds_dict = json.loads(creds_json)
+        self.creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, self.scope)
         self.gc = gspread.authorize(self.creds)
 
     def get_booking_sheet(self):
