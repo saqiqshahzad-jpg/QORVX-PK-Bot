@@ -1,0 +1,7 @@
+node_modules/
+frontend/node_modules/
+backend/.env
+.env
+**/.env
+backend/credentials.json
+credentials.json

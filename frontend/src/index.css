@@ -1,0 +1,30 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: #212121;
+}
+
+/* ChatGPT Style Markdown Formatting */
+.markdown-container strong {
+  color: #fff;
+  font-weight: 700;
+}
+
+.markdown-container ul {
+  list-style-type: disc;
+  margin-left: 1.5rem;
+  margin-top: 0.5rem;
+}
+
+.markdown-container p {
+  margin-bottom: 1rem;
+}
+
+/* Hide Scrollbar but allow scrolling */
+::-webkit-scrollbar {
+  display: none;
+}

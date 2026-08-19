@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "framer-motion": "^12.38.0",
+    "typewriter-effect": "^2.22.0"
+  }
+}
