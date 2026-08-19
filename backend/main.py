@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import logging
 
@@ -8,7 +9,8 @@ import logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - [%(levelname)s] - %(name)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
+    datefmt='%Y-%m-%d %H:%M:%S',
+    stream=sys.stdout
 )
 logger = logging.getLogger("QORVX")
 import random
@@ -667,22 +669,30 @@ def home():
 @app.get('/webhook')
 def verify_whatsapp_webhook(request: Request):
     params = request.query_params
+    print(f"🔥 [GET /webhook] Verification request received: {params}", flush=True)
     if params.get("hub.mode") == "subscribe" and params.get("hub.verify_token") == MY_VERIFY_TOKEN:
+        print("✅ [GET /webhook] Token matched! Verified.", flush=True)
         return PlainTextResponse(content=str(params.get("hub.challenge")), status_code=200)
+    print("❌ [GET /webhook] Token mismatch or invalid mode.", flush=True)
     return PlainTextResponse(content="Error", status_code=403)
 
 @app.post('/webhook')
 async def receive_whatsapp_message(request: Request, background_tasks: BackgroundTasks):
     try:
-        data = await request.json()
+        raw_body = await request.body()
+        print(f"🔥 [POST /webhook] Raw payload received: {raw_body.decode('utf-8')}", flush=True)
+        data = json.loads(raw_body)
+        print(f"🔥 [POST /webhook] Parsed JSON: {json.dumps(data)}", flush=True)
         background_tasks.add_task(process_whatsapp_data, data)
         return PlainTextResponse(content="OK", status_code=200)
     except Exception as e:
+        print(f"🚨 [POST /webhook] Webhook Accept Error: {str(e)}", flush=True)
         logger.exception(f"Webhook Accept Error: {str(e)}")
         # Returning 200 so Meta doesn't block the webhook
         return PlainTextResponse(content="OK", status_code=200)
 
 async def process_whatsapp_data(data: dict):
+    print(f"🚀 [BACKGROUND TASK] process_whatsapp_data started", flush=True)
     try:
         if data.get("object") and data.get("entry"):
             for entry in data["entry"]:
@@ -709,6 +719,7 @@ async def process_whatsapp_data(data: dict):
                     if "messages" in value:
                         for message in value["messages"]:
                             from_number = message["from"]
+                            print(f"📩 [WEBHOOK] Message from: {from_number} | Type: {message.get('type')} | Tenant: {tenant_id}", flush=True)
                             logger.info(f"📩 [WEBHOOK] Message from: {from_number} | Type: {message.get('type')} | Tenant: {tenant_id}")
 
                             # ═══ DEDUP: Skip if Meta retried this message ═══
@@ -1129,5 +1140,6 @@ async def process_whatsapp_data(data: dict):
                                     
         return PlainTextResponse(content="OK", status_code=200)
     except Exception as e:
+        print(f"🚨 [BACKGROUND TASK ERROR] {str(e)}", flush=True)
         logger.exception(f"🚨 Webhook Parse Crash: {str(e)}")
         return PlainTextResponse(content="OK", status_code=200)
