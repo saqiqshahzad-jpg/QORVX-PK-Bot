@@ -248,39 +248,52 @@ def handle_calendar_booking(date_req: str, time_req: str, phone: str, tenant_id:
         logger.error(f"🚨 Booking Engine Crash: {str(e)}")
         return {"status": "error"}
 
-def query_property_database(bhk: int, max_budget: int, location: str, tenant_id: str, booking_sheet_name: str, property_sheet_name: str, purpose: str = "buy"):
+def query_property_database(listing_type: str, property_type: str, city_society: str, budget: int, tenant_id: str, booking_sheet_name: str, property_sheet_name: str):
     try:
         workspace = GoogleSpreadsheetClient(tenant_id, booking_sheet_name, property_sheet_name)
         sheet = workspace.get_property_sheet()
         import pandas as pd
         df = pd.DataFrame(sheet.get_all_records())
         
-        df['BHK'] = pd.to_numeric(df['BHK'], errors='coerce').fillna(0).astype(int)
-        df['Budget'] = pd.to_numeric(df['Budget'], errors='coerce').fillna(0).astype(int)
-        
-        intent = "rent" if purpose == "rent" else "sale"
         if 'Listing_Type' in df.columns:
-            df = df[df['Listing_Type'].astype(str).str.contains(intent, case=False, na=False)]
+            df['Listing_Type'] = df['Listing_Type'].astype(str).str.strip().str.lower()
+        if 'Property_Type' in df.columns:
+            df['Property_Type'] = df['Property_Type'].astype(str).str.strip().str.lower()
+        if 'City' in df.columns:
+            df['City'] = df['City'].astype(str).str.strip().str.lower()
+        if 'Society_Area' in df.columns:
+            df['Society_Area'] = df['Society_Area'].astype(str).str.strip().str.lower()
+        
+        if 'Demand_PKR' in df.columns:
+            df['Demand_PKR'] = pd.to_numeric(df['Demand_PKR'], errors='coerce').fillna(0).astype(int)
+        else:
+            return []
             
-        if location:
-            safe_loc = location.strip().lower()
+        if listing_type:
+            lt_lower = listing_type.strip().lower()
+            if lt_lower == "buy": lt_lower = "sale"
+            df = df[df['Listing_Type'].str.contains(lt_lower, na=False)]
+            
+        if property_type:
+            pt_lower = property_type.strip().lower()
+            df = df[df['Property_Type'].str.contains(pt_lower, na=False)]
+            
+        if city_society:
+            cs_lower = city_society.strip().lower()
             loc_filter = pd.Series(False, index=df.index)
-            if 'Location' in df.columns:
-                loc_filter = loc_filter | df['Location'].astype(str).str.strip().str.lower().str.contains(safe_loc, na=False)
             if 'City' in df.columns:
-                loc_filter = loc_filter | df['City'].astype(str).str.strip().str.lower().str.contains(safe_loc, na=False)
+                loc_filter = loc_filter | df['City'].str.contains(cs_lower, na=False)
+            if 'Society_Area' in df.columns:
+                loc_filter = loc_filter | df['Society_Area'].str.contains(cs_lower, na=False)
             df = df[loc_filter]
             
-        match_df = df[(df['BHK'] == bhk) & (df['Budget'] <= max_budget)]
-        
-        if match_df.empty:
-            match_df = df[(df['BHK'] == bhk) & (df['Budget'] <= max_budget * 1.15)]
+        if budget > 0:
+            min_budget = int(budget * 0.75)
+            max_budget = int(budget * 1.25)
+            df = df[(df['Demand_PKR'] >= min_budget) & (df['Demand_PKR'] <= max_budget)]
             
-        if not match_df.empty: 
-            return match_df.to_dict(orient="records")
-        return []
-    except Exception as e: 
-        logger.error(f"Property DB Query Crash: {str(e)}")
+        if not df.empty: 
+            return df.to_dict(orient="records")
         return []
     except Exception as e: 
         logger.error(f"🚨 Property DB Query Crash: {str(e)}")
@@ -464,7 +477,7 @@ def detect_purpose(msg_body: str, chat_history: list) -> str:
     
     return "unknown"
 
-def normalize_budget(budget_str: str, market: str = "") -> int:
+def normalize_budget(budget_str: str) -> int:
     s = str(budget_str).lower().replace(",", "").replace("pkr", "").strip()
     try:
         num_match = re.search(r'([\d]+\.?\d*)', s)
@@ -480,7 +493,7 @@ def normalize_budget(budget_str: str, market: str = "") -> int:
     except Exception:
         return 0
 
-def format_currency(amount: int, market: str = "") -> str:
+def format_currency(amount: int) -> str:
     if amount >= 10000000: return f"{amount / 10000000:g} Crore"
     if amount >= 100000: return f"{amount / 100000:g} Lacs"
     return f"{amount:,}"
@@ -494,8 +507,7 @@ def get_session(phone: str, tenant_id: str) -> dict:
     key = f"{tenant_id}:{phone}"
     if key not in USER_SESSIONS:
         USER_SESSIONS[key] = {
-            "bhk": None, "budget": None, "location": None,
-            "purpose": None, "market": None, "language": None,
+            "listing_type": None, "property_type": None, "city_society": None, "budget": None
         }
     return USER_SESSIONS[key]
 
@@ -566,27 +578,18 @@ def build_state_aware_prompt(session: dict, base_prompt: str) -> str:
     """Inject current session state into the LLM system prompt."""
     collected = []
     missing = []
-    currency = "PKR"
 
-    if session.get("purpose"):
-        collected.append(f"Purpose: {session['purpose'].upper()}")
-    else:
-        missing.append("Purpose (Buy or Rent)")
+    if session.get("listing_type"): collected.append(f"Listing Type: {session['listing_type']}")
+    else: missing.append("Listing_Type (Buy or Rent)")
 
-    if session.get("location"):
-        collected.append(f"Location: {session['location']}")
-    else:
-        missing.append("Location (city or area)")
+    if session.get("property_type"): collected.append(f"Property Type: {session['property_type']}")
+    else: missing.append("Property_Type (Plot, House, Apartment, File)")
 
-    if session.get("bhk"):
-        collected.append(f"BHK: {session['bhk']}")
-    else:
-        missing.append("BHK (number of bedrooms)")
+    if session.get("city_society"): collected.append(f"City/Society: {session['city_society']}")
+    else: missing.append("City/Society")
 
-    if session.get("budget"):
-        collected.append(f"Budget: {format_currency(session['budget'])}")
-    else:
-        missing.append(f"Budget (in {currency})")
+    if session.get("budget"): collected.append(f"Budget: {format_currency(session['budget'])}")
+    else: missing.append("Budget (in PKR Lakh/Crore)")
 
     injection = "\n\n=== CURRENT SESSION STATE (CRITICAL — TRUST THIS OVER YOUR MEMORY) ==="
 
@@ -599,13 +602,14 @@ def build_state_aware_prompt(session: dict, base_prompt: str) -> str:
         injection += "\n".join(f"  NEED: {m}" for m in missing)
         injection += f"\n\nYOUR ONLY ACTION: Ask for {missing[0]}. ONE question. ONE sentence. ONE emoji."
     else:
-        injection += "\n\nALL 4 PARAMETERS COLLECTED. Output [PROPERTY_SEARCH: ...] JSON IMMEDIATELY. Do NOT ask any more questions."
+        injection += "\n\nALL 4 PARAMETERS COLLECTED. Output [PROPERTY_SEARCH: ...] JSON IMMEDIATELY. Do NOT ask any more questions.\n"
+        injection += 'JSON FORMAT: [PROPERTY_SEARCH: {"listing_type": "Sale|Rent", "property_type": "Plot|House|File", "city_society": "string", "budget": <int>}]'
 
     return base_prompt + injection
 
 def session_has_all_params(session: dict) -> bool:
-    """Check if all 4 required parameters have been collected."""
-    return all([session.get("bhk"), session.get("budget"), session.get("location"), session.get("purpose")])
+    """Check if all required parameters have been collected."""
+    return all([session.get("listing_type"), session.get("property_type"), session.get("city_society"), session.get("budget")])
 
 # ── 🇵🇰 PAKISTAN MARKET SYSTEM PROMPT ──
 MASTER_SYSTEM_PROMPT = """Identity: You are QORVX Concierge, an elite Real Estate AI Assistant operating exclusively for Pakistani clients. You are a highly respectful, sharp, and helpful Pakistani Real Estate Consultant (Master Closer).
@@ -1031,16 +1035,16 @@ async def process_whatsapp_data(data: dict):
                                         completion = robust_chat_completion(messages_array, 0.4, 150)
                                         ai_response = completion.choices[0].message.content
                                         
-                                        # 🛡️ PREMATURE QUERY PREVENTION (Bug Fix #1 & #3)
+                                        # 🛡️ PREMATURE QUERY PREVENTION
                                         if "PROPERTY_SEARCH" in ai_response and not session_has_all_params(session):
                                             missing = []
-                                            if not session.get("bhk"): missing.append("BHK")
+                                            if not session.get("listing_type"): missing.append("Buy/Rent")
+                                            if not session.get("property_type"): missing.append("Property Type")
+                                            if not session.get("city_society"): missing.append("City/Area")
                                             if not session.get("budget"): missing.append("Budget")
-                                            if not session.get("location"): missing.append("Location")
-                                            if not session.get("purpose"): missing.append("Purpose (Buy/Rent)")
                                             missing_str = ", ".join(missing)
                                             
-                                            ai_response = f"Sir, property search shuru karne se pehle, barah-e-karam apna {missing_str} bata dein. 🏛️"
+                                            ai_response = f"Sir, property search shuru karne se pehle, barah-e-karam apna {missing_str} confirm kar dein. 🏛️"
                                     
                                     if "PROPERTY_SEARCH" in ai_response and "{" in ai_response and "}" in ai_response:
                                         try:
@@ -1048,59 +1052,53 @@ async def process_whatsapp_data(data: dict):
                                             end_idx = ai_response.rfind("}") + 1
                                             json_str = ai_response[start_idx:end_idx]
                                             search_params = json.loads(json_str)
-                                            # 🏠🏡 PURPOSE EXTRACTION: Get purpose from AI JSON or detect from history
-                                            search_purpose = search_params.get("purpose", "").lower()
-                                            if search_purpose not in ["buy", "rent"]:
-                                                search_purpose = detect_purpose(msg_body, db_history)
-                                                if search_purpose == "unknown":
-                                                    search_purpose = "buy"  # Default fallback
-                                            bhk_val = search_params.get("bhk", 0)
-                                            bhk_val = int(bhk_val) if str(bhk_val).isdigit() else 0
-                                            budget_val = normalize_budget(str(search_params.get("budget", 0)))
-                                            properties_list = query_property_database(bhk_val, budget_val, search_params.get("location", ""), tenant_id, booking_sheet_name, property_sheet_name, purpose=search_purpose)
+                                            
+                                            l_type = search_params.get("listing_type", session.get("listing_type", ""))
+                                            p_type = search_params.get("property_type", session.get("property_type", ""))
+                                            c_soc = search_params.get("city_society", session.get("city_society", ""))
+                                            budget_val = normalize_budget(str(search_params.get("budget", session.get("budget", 0))))
+                                            
+                                            properties_list = query_property_database(l_type, p_type, c_soc, budget_val, tenant_id, booking_sheet_name, property_sheet_name)
                                             
                                             if properties_list:
                                                 target_properties = properties_list[:3]
-                                                
-                                                # 🔥 FIX #1: ASAL GINTI (DYNAMIC COUNT) YAHAN SE NIKLE GI
                                                 actual_count = len(target_properties)
                                                 
-                                                # 🔥 FIX #2: MESSAGE MEIN ASAL NUMBER JAYEGA!
-                                                # 🌍 DUAL-MARKET: Currency-aware scanning message
-                                                # 🏠🏡 PURPOSE-AWARE SCANNING MESSAGE
-                                                if search_purpose == "rent":
-                                                    scan_msg = f"Jee hamare paas {actual_count} luxury rental portfolio(s) available hain, abhi dispatch ho rahe hain... 🏛️✨"
+                                                if l_type.lower() == "rent":
+                                                    scan_msg = f"Jee hamare paas {actual_count} premium rental portfolio(s) available hain, abhi dispatch ho rahe hain... 🏛️✨"
                                                 else:
-                                                    scan_msg = f"Hamare premium registries scan ho rahi hain. {actual_count} curated portfolio(s) abhi dispatch ho rahe hain... 🏛️✨"
+                                                    scan_msg = f"Hamare premium registries scan ho rahi hain. {actual_count} exclusive portfolio(s) abhi dispatch ho rahe hain... 🏛️✨"
                                                 send_whatsapp_text(tenant_id, from_number, scan_msg, whatsapp_token)
-                                                time.sleep(1)  # 🔥 META QUEUE BUFFER: 1s delay ensures text handshake delivers before media loop fires
+                                                time.sleep(1)
                                                 
                                                 for idx, prop in enumerate(target_properties, start=1):
-                                                    media_cols = ['Main_Image', 'Image_2', 'Image_3', 'Image_4', 'Image_5', 'Image_6']
+                                                    media_cols = ['Main_Image', 'Image_2', 'Image_3', 'Image_4', 'Image_5']
                                                     for col in media_cols:
                                                         img_url = str(prop.get(col, '')).strip()
                                                         if img_url and img_url.lower() != 'nan' and img_url.startswith('http'):
                                                             send_whatsapp_media(tenant_id, from_number, img_url, "image", whatsapp_token)
                                                     
-                                                    prop_id = prop.get("Property_ID", f"PROP-{idx}")
-                                                    budget_fmt = format_currency(prop.get('Budget'))
+                                                    prop_id = prop.get("Property_ID", f"PROP-PK-{idx}")
+                                                    budget_fmt = format_currency(int(prop.get('Demand_PKR', 0)))
+                                                    title = f"{prop.get('Size', '')} {prop.get('Property_Type', '')} in {prop.get('Society_Area', '')}"
+                                                    location = f"{prop.get('Phase_Block', '')}, {prop.get('City', '')}"
                                                     
-                                                    if search_purpose == "rent":
-                                                        property_text = f"🏛️ *RENTAL MATCH*\n\n📌 *Title:* {prop.get('Title')}\n💵 *Rent:* PKR {budget_fmt}/month\n📍 *Location:* {prop.get('Location')}"
+                                                    if l_type.lower() == "rent":
+                                                        property_text = f"🏛️ *RENTAL MATCH*\n\n📌 *Asset:* {title}\n💵 *Rent:* PKR {budget_fmt}/month\n📍 *Location:* {location}"
                                                     else:
-                                                        property_text = f"🏛️ *ASSET PROFILE MATCH*\n\n📌 *Title:* {prop.get('Title')}\n💵 *Price:* PKR {budget_fmt}\n📍 *Location:* {prop.get('Location')}"
+                                                        property_text = f"🏛️ *EXCLUSIVE ASSET MATCH*\n\n📌 *Asset:* {title}\n💵 *Demand:* PKR {budget_fmt}\n📍 *Location:* {location}"
                                                     
                                                     send_property_button(tenant_id, from_number, property_text, prop_id, whatsapp_token)
                                                     
-                                                    video_url = str(prop.get('Walkthrough_Video', '')).strip()
+                                                    video_url = str(prop.get('Video', '')).strip()
                                                     if video_url and video_url.lower() != 'nan' and video_url.startswith('http'):
-                                                        video_text = f"🎥 *Full Walkthrough Video Tour*\n{video_url}"
+                                                        video_text = f"🎥 *Exclusive Walkthrough Tour*\n{video_url}"
                                                         send_whatsapp_text(tenant_id, from_number, video_text, whatsapp_token)
 
-                                                ai_response = "Is property ki private viewing schedule karne ke liye barah-e-karam apna Poora Naam aur Email share karein. ✨"
+                                                ai_response = "Is property ki private site visit schedule karne ke liye barah-e-karam apna Poora Naam aur Email share karein taake humari team raabta kare. ✨"
                                                 
                                                 # Reset session after successful property search
-                                                session.update({"bhk": None, "budget": None, "location": None, "purpose": None})
+                                                session.update({"listing_type": None, "property_type": None, "city_society": None, "budget": None})
                                                 
                                                 save_supabase_message(from_number, "user", msg_body, tenant_id)
                                                 save_supabase_message(from_number, "assistant", ai_response, tenant_id)
@@ -1108,11 +1106,7 @@ async def process_whatsapp_data(data: dict):
                                                 return PlainTextResponse(content="OK", status_code=200)
 
                                             else:
-                                                # 🌍 DUAL-MARKET + PURPOSE: Inventory-isolated fallback (NO cross-contamination)
-                                                if search_purpose == "rent":
-                                                    ai_response = "Currently hamare paas is budget mein yahan rental inventory pending hai. Kya aap DHA Phase 6 ya Clifton try karna chahenge? 🏛️"
-                                                else:
-                                                    ai_response = "Currently hamare paas is budget mein yahan inventory pending hai. Kya aap DHA Phase 6 ya Bahria Town try karna chahenge? 🏛️"
+                                                ai_response = "Sir, filhal is exact specific block mein hamari inventory sold out hai. Lekin is budget mein mere paas DHA Phase 8 ya Bahria Town mein behtareen options hain. Kya main unki details bhejun? 🏛️"
                                         except Exception as e: 
                                             logger.error(f"🚨 RAG LLM JSON Parse Crash: {str(e)}")
                                             ai_response = "Aapki luxury portfolio request process ho rahi hai. Kya aap apna target BHK, budget, location, aur purpose (Buy/Rent) confirm kar sakte hain? 🏛️"
