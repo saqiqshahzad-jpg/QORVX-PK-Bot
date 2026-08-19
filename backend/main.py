@@ -96,7 +96,6 @@ REPORT_PASSPHRASE = "ALAAUDIN.AI.LABS"
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip('/')
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
-@lru_cache(maxsize=128)
 def get_tenant_config(tenant_id: str):
     if not SUPABASE_URL or not SUPABASE_KEY:
         return {}
