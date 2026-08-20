@@ -1228,18 +1228,52 @@ async def process_whatsapp_data(data: dict):
                                             full_ai_text += outro_msg
                                             ai_response = full_ai_text
                                             
-                                            session.update({"purpose": None, "bhk": None, "location": None, "budget": None})
+                                            # Save active context
+                                            session["active_property"] = results[0]
+                                            session["state"] = "INSPECTING_PROPERTY"
+                                            
                                             save_supabase_message(from_number, "user", msg_body, tenant_id)
                                             save_supabase_message(from_number, "assistant", ai_response, tenant_id)
                                             return PlainTextResponse(content="OK", status_code=200)
                                         else:
                                             ai_response = f"Sir, filhal PKR {session['budget']} ke budget mein {session['location']} mein hamari inventory sold out hai. 🏢"
                                             
-                                        # Reset session after successful property search
-                                        session.update({"purpose": None, "bhk": None, "location": None, "budget": None})
                                     else:
-                                        active_prompt = get_master_system_prompt(session)
-                                        active_prompt = build_state_aware_prompt(session, active_prompt)
+                                        if session.get("state") == "INSPECTING_PROPERTY":
+                                            # Fallback Lead Capture Routing
+                                            email_match = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', msg_body)
+                                            if email_match:
+                                                client_email = email_match.group(0)
+                                                client_name = "Client"  # Simple fallback
+                                                prop_id = session.get("active_property", {}).get("Property_ID", "Unknown")
+                                                workspace = GoogleWorkspaceManager(tenant_id, booking_sheet_name, property_sheet_name)
+                                                workspace.append_lead_record(from_number, client_name, client_email, prop_id, "PK")
+                                                
+                                                confirm_msg = "Shukriya Janab! Aapki details agent ko bhej di gayi hain, wo jald aapse rabta karenge. 🤝"
+                                                send_whatsapp_text(tenant_id, from_number, confirm_msg, whatsapp_token)
+                                                save_supabase_message(from_number, "user", msg_body, tenant_id)
+                                                save_supabase_message(from_number, "assistant", confirm_msg, tenant_id)
+                                                
+                                                session["state"] = None
+                                                return PlainTextResponse(content="OK", status_code=200)
+                                                
+                                            active_prop = session.get("active_property", {})
+                                            active_prompt = f"""Identity: Aap {session.get('agency_tag', 'Real Estate Agency')} ke smart consultant hain.
+
+ACTIVE PROPERTY DATA:
+{json.dumps(active_prop, indent=2)}
+
+STRICT RULES:
+1. ANSWER ACCURATELY: User ke sawal ka jawab sirf upar diye gaye ACTIVE PROPERTY DATA (Price, Size, BHK, Description, Amenities, Possession) se dein.
+2. ZERO HALLUCINATION / HONESTY: Agar koi aisi baat poochi jaye jo data/description mein MAUJOOD NAHI HAI, toh andaza mat lagayein. Polite andaz mein kahein:
+   "Janab, yeh specific detail confirm karne ke liye main agent se baat karwa deta hoon. Barah-e-karam apna Name aur Email share kardein taake hamara agent aapse direct rabta kare."
+3. GENDER-NEUTRAL: Use 'Janab' or 'Aap'. Strictly do not use 'Sir' or 'Bhai'.
+4. LANGUAGE: 100% Natural, polite Roman Urdu.
+"""
+                                        else:
+                                            active_prompt = get_master_system_prompt(session)
+                                            active_prompt = build_state_aware_prompt(session, active_prompt)
+                                            
                                         messages_array = [{"role": "system", "content": active_prompt}]
                                         
                                         # Pass last 8 messages (expanded from 3 to prevent amnesia)
@@ -1388,8 +1422,9 @@ async def process_whatsapp_data(data: dict):
 
                                             ai_response = "Is property ki private site visit schedule karne ke liye barah-e-karam apna Poora Naam aur Email share karein taake humari team raabta kare. ✨"
                                             
-                                            # Reset session after successful property search
-                                            session.update({"purpose": None, "bhk": None, "location": None, "budget": None})
+                                            # Save active context
+                                            session["active_property"] = target_properties[0]
+                                            session["state"] = "INSPECTING_PROPERTY"
                                             
                                             save_supabase_message(from_number, "user", msg_body, tenant_id)
                                             save_supabase_message(from_number, "assistant", ai_response, tenant_id)
