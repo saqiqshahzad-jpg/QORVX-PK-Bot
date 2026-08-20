@@ -578,7 +578,7 @@ def extract_and_update_session(msg_body: str, session: dict, chat_history: list)
     if not session.get("location"):
         for kw in PK_LOCATION_KEYWORDS:
             if kw in msg_lower:
-                session["location"] = msg_body.strip().title()
+                session["location"] = kw.title()
                 break
         # Context: AI asked for location and user gave short answer
         if not session.get("location") and len(msg_body.split()) <= 3:
@@ -1053,12 +1053,13 @@ async def process_whatsapp_data(data: dict):
                                             messages_array.append(past_msg)
                                         
                                         lang_hint = "Respond ENTIRELY in Roman Urdu. ONLY ask for the MISSING info listed in session state above."
-                                        messages_array.append({"role": "system", "content": lang_hint})
-                                        
-                                        messages_array.append({"role": "user", "content": msg_body})
+                                        # Fix: LLaMA strictly requires system prompts at the beginning or as user instructions. 
+                                        # Let's append this as part of the user's latest instruction instead of a new system message to avoid failing.
+                                        messages_array.append({"role": "user", "content": f"{msg_body}\n\n[SYSTEM INSTRUCTION: {lang_hint}]"})
                                         
                                         completion = robust_chat_completion(messages_array, 0.4, 150)
                                         ai_response = completion.choices[0].message.content
+                                        logger.info(f"🧠 [RAW LLM RESPONSE] {ai_response}")
                                         
                                         # 🛡️ PREMATURE QUERY PREVENTION
                                         if "PROPERTY_SEARCH" in ai_response and "{" in ai_response and "}" in ai_response:
