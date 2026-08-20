@@ -166,15 +166,14 @@ app.add_middleware(
 class GoogleSpreadsheetClient:
     def __init__(self, tenant_id: str, booking_sheet_name: str, property_sheet_name: str):
         self.tenant_id = tenant_id
-        self.booking_sheet_name = booking_sheet_name
-        self.property_sheet_name = property_sheet_name
-        self.scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        self.booking_sheet_name = "BookingSlot"
+        self.property_sheet_name = "QORVX_PK_Master_Database"
+        self.scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
         creds_json = os.getenv("GOOGLE_CREDENTIALS")
         if not creds_json:
             raise ValueError("GOOGLE_CREDENTIALS environment variable is not set")
         creds_dict = json.loads(creds_json)
-        self.creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, self.scope)
-        self.gc = gspread.authorize(self.creds)
+        self.gc = gspread.service_account_from_dict(creds_dict, scopes=self.scope)
 
     def get_booking_sheet(self):
         return self.gc.open(self.booking_sheet_name).worksheet("Sheet2")
@@ -251,7 +250,7 @@ def handle_calendar_booking(date_req: str, time_req: str, phone: str, tenant_id:
         logger.error(f"🚨 Booking Engine Crash: {str(e)}")
         return {"status": "error"}
 
-def query_property_database(listing_type: str, property_type: str, city_society: str, budget: int, tenant_id: str, booking_sheet_name: str, property_sheet_name: str, agency_tag: str = None):
+def query_property_database(listing_type: str, bhk: int, city_society: str, budget: int, tenant_id: str, booking_sheet_name: str, property_sheet_name: str, agency_tag: str = None):
     try:
         workspace = GoogleSpreadsheetClient(tenant_id, booking_sheet_name, property_sheet_name)
         sheet = workspace.get_property_sheet()
@@ -277,9 +276,9 @@ def query_property_database(listing_type: str, property_type: str, city_society:
             if lt_lower == "buy": lt_lower = "sale"
             df = df[df['Listing_Type'].str.contains(lt_lower, na=False)]
             
-        if property_type:
-            pt_lower = property_type.strip().lower()
-            df = df[df['Property_Type'].str.contains(pt_lower, na=False)]
+        if bhk and 'BHK' in df.columns:
+            df['BHK'] = pd.to_numeric(df['BHK'], errors='coerce').fillna(0).astype(int)
+            df = df[df['BHK'] == bhk]
             
         if city_society:
             cs_lower = city_society.strip().lower()
@@ -516,7 +515,7 @@ def get_session(phone: str, tenant_id: str) -> dict:
     key = f"{tenant_id}:{phone}"
     if key not in USER_SESSIONS:
         USER_SESSIONS[key] = {
-            "listing_type": None, "property_type": None, "city_society": None, "budget": None, "agency_tag": None
+            "purpose": None, "bhk": None, "location": None, "budget": None, "agency_tag": None
         }
     return USER_SESSIONS[key]
 
@@ -589,13 +588,13 @@ def build_state_aware_prompt(session: dict, base_prompt: str) -> str:
     collected = []
     missing = []
 
-    if session.get("listing_type"): collected.append(f"Listing Type: {session['listing_type']}")
+    if session.get("purpose"): collected.append(f"Listing Type: {session['purpose']}")
     else: missing.append("Listing_Type (Buy or Rent)")
 
-    if session.get("property_type"): collected.append(f"Property Type: {session['property_type']}")
-    else: missing.append("Property_Type (Plot, House, Apartment, File)")
+    if session.get("bhk"): collected.append(f"BHK: {session['bhk']}")
+    else: missing.append("BHK (Number of bedrooms / Size)")
 
-    if session.get("city_society"): collected.append(f"City/Society: {session['city_society']}")
+    if session.get("location"): collected.append(f"City/Society: {session['location']}")
     else: missing.append("City/Society")
 
     if session.get("budget"): collected.append(f"Budget: {format_currency(session['budget'])}")
@@ -619,7 +618,7 @@ def build_state_aware_prompt(session: dict, base_prompt: str) -> str:
 
 def session_has_all_params(session: dict) -> bool:
     """Check if all required parameters have been collected."""
-    return all([session.get("listing_type"), session.get("property_type"), session.get("city_society"), session.get("budget")])
+    return all([session.get("purpose"), session.get("bhk"), session.get("location"), session.get("budget")])
 
 # ── 🇵🇰 PAKISTAN MARKET SYSTEM PROMPT ──
 MASTER_SYSTEM_PROMPT = """Identity: You are QORVX Concierge, an elite Real Estate AI Assistant operating exclusively for Pakistani clients. You are a highly respectful, sharp, and helpful Pakistani Real Estate Consultant (Master Closer).
@@ -1046,9 +1045,9 @@ async def process_whatsapp_data(data: dict):
                                         # 🛡️ PREMATURE QUERY PREVENTION
                                         if "PROPERTY_SEARCH" in ai_response and not session_has_all_params(session):
                                             missing = []
-                                            if not session.get("listing_type"): missing.append("Buy/Rent")
-                                            if not session.get("property_type"): missing.append("Property Type")
-                                            if not session.get("city_society"): missing.append("City/Area")
+                                            if not session.get("purpose"): missing.append("Buy/Rent")
+                                            if not session.get("bhk"): missing.append("BHK")
+                                            if not session.get("location"): missing.append("City/Area")
                                             if not session.get("budget"): missing.append("Budget")
                                             missing_str = ", ".join(missing)
                                             
@@ -1061,13 +1060,13 @@ async def process_whatsapp_data(data: dict):
                                             json_str = ai_response[start_idx:end_idx]
                                             search_params = json.loads(json_str)
                                             
-                                            l_type = search_params.get("listing_type", session.get("listing_type", ""))
-                                            p_type = search_params.get("property_type", session.get("property_type", ""))
-                                            c_soc = search_params.get("city_society", session.get("city_society", ""))
+                                            l_type = search_params.get("purpose", session.get("purpose", ""))
+                                            bhk_val = int(search_params.get("bhk", session.get("bhk", 0)))
+                                            c_soc = search_params.get("location", session.get("location", ""))
                                             budget_val = normalize_budget(str(search_params.get("budget", session.get("budget", 0))))
                                             
                                             active_agency_tag = session.get("agency_tag")
-                                            properties_list = query_property_database(l_type, p_type, c_soc, budget_val, tenant_id, booking_sheet_name, property_sheet_name, active_agency_tag)
+                                            properties_list = query_property_database(l_type, bhk_val, c_soc, budget_val, tenant_id, booking_sheet_name, property_sheet_name, active_agency_tag)
                                             
                                             if properties_list:
                                                 target_properties = properties_list[:3]
@@ -1107,7 +1106,7 @@ async def process_whatsapp_data(data: dict):
                                                 ai_response = "Is property ki private site visit schedule karne ke liye barah-e-karam apna Poora Naam aur Email share karein taake humari team raabta kare. ✨"
                                                 
                                                 # Reset session after successful property search
-                                                session.update({"listing_type": None, "property_type": None, "city_society": None, "budget": None})
+                                                session.update({"purpose": None, "bhk": None, "location": None, "budget": None})
                                                 
                                                 save_supabase_message(from_number, "user", msg_body, tenant_id)
                                                 save_supabase_message(from_number, "assistant", ai_response, tenant_id)
