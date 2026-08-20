@@ -1097,6 +1097,26 @@ async def process_whatsapp_data(data: dict):
                                         
                                         completion = robust_chat_completion(messages_array, 0.4, 150)
                                         ai_response = completion.choices[0].message.content
+                                        if ai_response is None:
+                                            ai_response = ""
+
+                                        # --- FAILSAFE: IF LLM RETURNS BLANK ---
+                                        if not ai_response.strip():
+                                            logger.warning("LLM returned empty string. Triggering Python State Machine Failsafe.")
+                                            
+                                            # Determine the next missing piece of information dynamically
+                                            if not session.get("purpose"):
+                                                ai_response = "Assalam-o-Alaikum! Aap property kharidna chahte hain ya rent par lena chahte hain? 🏡"
+                                            elif not session.get("location"):
+                                                ai_response = "Aap kis shehar ya specific area (society) mein property dekhna chahte hain? 📍"
+                                            elif not session.get("bhk"):
+                                                ai_response = "Aapko kitne BHK ya rooms ki requirement hai? (Ya agar plot hai to size batayein) 🛏️"
+                                            elif not session.get("budget"):
+                                                ai_response = "Aapka approximate budget (Lakh ya Crore mein) kitna hai? 💰"
+                                            else:
+                                                # If all fields are somehow filled but LLM went blank, force the query trigger
+                                                ai_response = f'[PROPERTY_SEARCH: {{"purpose": "{session.get("purpose")}", "location": "{session.get("location")}", "bhk": {session.get("bhk")}, "budget": {session.get("budget")}}}]'
+                                                
                                         logger.info(f"🧠 [RAW LLM RESPONSE] {ai_response}")
                                         
                                         # --- FIXED ACCUMULATIVE SESSION STATE ---
