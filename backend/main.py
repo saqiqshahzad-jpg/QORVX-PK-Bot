@@ -1061,7 +1061,8 @@ async def process_whatsapp_data(data: dict):
                                         ai_response = completion.choices[0].message.content
                                         logger.info(f"🧠 [RAW LLM RESPONSE] {ai_response}")
                                         
-                                        # --- FIXED JSON PARSER & SESSION EXTRACTOR ---
+                                        # --- FIXED ACCUMULATIVE SESSION STATE ---
+                                        # Har step par sirf nayi aane wali values update hongi, purani delete nahi hongi
                                         if "PROPERTY_SEARCH" in ai_response:
                                             try:
                                                 start_idx = ai_response.find("{")
@@ -1070,23 +1071,28 @@ async def process_whatsapp_data(data: dict):
                                                     json_str = ai_response[start_idx:end_idx]
                                                     search_params = json.loads(json_str)
                                         
-                                                    # Map possible variations
-                                                    purpose = search_params.get("purpose") or search_params.get("Listing_Type") or "buy"
-                                                    bhk = search_params.get("bhk") or search_params.get("BHK")
-                                                    location = search_params.get("location") or search_params.get("City") or search_params.get("Society_Area")
-                                                    raw_budget = search_params.get("budget") or search_params.get("Demand_PKR")
+                                                    # Sirf tab update karein agar value exist karti ho (None se overwrite na ho)
+                                                    p = search_params.get("purpose") or search_params.get("Listing_Type")
+                                                    if p:
+                                                        session["purpose"] = str(p).strip().lower()
                                         
-                                                    if purpose:
-                                                        session["purpose"] = str(purpose).strip().lower()
-                                                    if bhk:
-                                                        session["bhk"] = int(bhk)
-                                                    if location:
-                                                        session["location"] = str(location).strip()
-                                                    if raw_budget:
-                                                        session["budget"] = normalize_budget(str(raw_budget))
+                                                    b = search_params.get("bhk") or search_params.get("BHK")
+                                                    if b:
+                                                        session["bhk"] = int(b)
+                                        
+                                                    l = search_params.get("location") or search_params.get("City") or search_params.get("Society_Area")
+                                                    if l:
+                                                        session["location"] = str(l).strip()
+                                        
+                                                    bg = search_params.get("budget") or search_params.get("Demand_PKR")
+                                                    if bg:
+                                                        session["budget"] = normalize_budget(str(bg))
                                             except Exception as e:
-                                                logger.error(f"JSON Parse Error: {e}")
+                                                logger.error(f"JSON Parse error: {e}")
                                                 
+                                        # Session state persist hone ke baad check karein
+                                        logger.info(f"Updated Session: {session}")
+                                        
                                         # Agar search_params mil gaye hain to foran sheet query allow karein
                                         if "PROPERTY_SEARCH" in ai_response and session.get("location") and session.get("bhk"):
                                             # Default fallback values agar purpose ya budget miss ho
