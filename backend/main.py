@@ -196,6 +196,22 @@ class GoogleSpreadsheetClient:
         except Exception as e:
             logger.error(f"🚨 Google Sheet Lead Append Crash: {str(e)}")
 
+@lru_cache(maxsize=10)
+def get_agency_tags(tenant_id: str, booking_sheet_name: str, property_sheet_name: str, cache_buster: int):
+    try:
+        workspace = GoogleSpreadsheetClient(tenant_id, booking_sheet_name, property_sheet_name)
+        sheet = workspace.get_property_sheet()
+        records = sheet.get_all_records()
+        df = pd.DataFrame(records)
+        agency_col = next((col for col in df.columns if str(col).strip().lower() == "agency_tag"), None)
+        if agency_col:
+            return df[agency_col].dropna().astype(str).unique().tolist()
+        return []
+    except Exception as e:
+        logger.error(f"Error fetching agency tags: {e}")
+        return []
+
+
 # =========================================================================================
 # 🚀 CORE ENGINE UTILITIES & DYNAMIC APPEND BOOKING ENGINE
 # =========================================================================================
@@ -525,31 +541,25 @@ def format_currency(amount: int) -> str:
 
 # ═══════════════════════════════════════════════════════════════
 # 🧠 SESSION STATE ENGINE (ANTI-AMNESIA CORE)
-# ═══════════════════════════════════════════════════════════════
-
-def get_session(phone: str, tenant_id: str) -> dict:
-    """Get or create a session for this user."""
-    key = f"{tenant_id}:{phone}"
-    if key not in USER_SESSIONS:
-        USER_SESSIONS[key] = {
-            "purpose": None, "bhk": None, "location": None, "budget": None, "agency_tag": None
-        }
-    return USER_SESSIONS[key]
-
-def extract_and_update_session(msg_body: str, session: dict, chat_history: list):
-    """Extract BHK, Location, Purpose, Budget from current message and update session."""
+# ═════════def extract_and_update_session(msg_body: str, phone: str, chat_history: list, tenant_id: str, tenant_config: dict) -> dict:
+    """Updates global session with extracted variables."""
+    session_id = f"{tenant_id}:{phone}"
+    if session_id not in USER_SESSIONS:
+        USER_SESSIONS[session_id] = {}
+    session = USER_SESSIONS[session_id]
+    
     msg_lower = msg_body.lower().strip()
 
-    # ── AGENCY TAG detection ──
-    # Dynamic Agency Tag Parsing
-    if "madina" in msg_lower or "madina_estate" in msg_lower:
-        session["agency_tag"] = "Madina_Estate"
-        logger.info(f"Agency tag locked: {session['agency_tag']}")
-    else:
-        for kw in AGENCY_KEYWORDS:
-            if kw in msg_lower:
-                session["agency_tag"] = kw
-                break
+    # ── AGENCY TAG detection (Dynamic) ──
+    cache_buster = int(time.time() // 300) # 5-minute cache
+    unique_tags = get_agency_tags(tenant_id, tenant_config.get("booking_sheet_name"), tenant_config.get("property_sheet_name"), cache_buster)
+    
+    for tag in unique_tags:
+        clean_tag = tag.strip().lower()
+        if clean_tag and (clean_tag in msg_lower or clean_tag.replace("_", " ") in msg_lower):
+            session["agency_tag"] = tag.strip()
+            logger.info(f"Dynamically locked agency_tag: {session['agency_tag']}")
+            break
 
     # ── Detect market & language ──
     detected = detect_market(msg_body, chat_history)
@@ -642,16 +652,21 @@ def session_has_all_params(session: dict) -> bool:
     """Check if all required parameters have been collected."""
     return all([session.get("purpose"), session.get("bhk"), session.get("location"), session.get("budget")])
 
-# ── 🇵🇰 PAKISTAN MARKET SYSTEM PROMPT ──
-MASTER_SYSTEM_PROMPT = """Identity: You are QORVX Concierge, an elite Real Estate AI Assistant operating exclusively for Pakistani clients. You are a highly respectful, sharp, and helpful Pakistani Real Estate Consultant (Master Closer).
+def get_master_system_prompt(session: dict) -> str:
+    current_agency = session.get("agency_tag", "QORVX Concierge")
+    formatted_agency_name = current_agency.replace("_", " ").title()
+    return f"""Identity: Aap {formatted_agency_name} ke smart aur friendly AI Real Estate Consultant hain.
 
-1. Bot Persona & Tone Guidelines
-- Tone: Extremely polite, professional, and helpful (Always use 'Aap', 'Sir/Ma'am', 'Bhai').
-- Language Stickiness: ALWAYS respond in Roman English (Pakistani style Roman Urdu). STRICTLY maintain Roman English at all times. The ONLY exception is if the user sends 2 or 3 consecutive messages in heavy/proper English, in which case you must switch to easy, simple English. Otherwise, always stick to Roman English.
-- Message Length: Maximum 2-3 lines per response. Do not write long paragraphs. Use emojis appropriately (📍, 🏡, 💰).
-- The "Zero-Silence" Rule: Always end your message with a gentle, relevant question to keep the conversation moving. Never leave a dead-end response.
+CORE RULES & PERSONA:
+1. STRICT AGENCY LOYALTY: Aap sirf aur sirf '{formatted_agency_name}' ko represent karte hain. Aapka kaam sirf apni agency ki properties recommend karna hai.
+2. OUT OF BOUNDS: Agar user kisi aur real estate agency ka naam le ya uski property mange, toh friendly tone mein politely mana kar dein aur bolein: "Maaf kijiyega, main sirf {formatted_agency_name} ki properties mein deal karta hoon."
+3. DOMAIN RESTRICTION: Sirf Real Estate ke hawale se baat karein. Faltu topics par friendly andaz mein wapas property par le aayen.
+4. TONE: Professional, highly polite, aur 100% Roman Urdu. (e.g., "Assalam-o-Alaikum! Main {formatted_agency_name} se baat kar raha hoon...").
+5. INVENTORY RECOMMENDATION: Jab user details de de, toh strictly wahi recommend karein jo backend filter karke dega.
 
-2. The Core State Machine (4-Step Qualification)
+6. The "Zero-Silence" Rule: Always end your message with a gentle, relevant question to keep the conversation moving. Never leave a dead-end response.
+
+7. The Core State Machine (4-Step Qualification)
 Your main objective is to collect these exactly 4 details before searching the database:
 - Listing_Type: (Buy / Rent)
 - City / Location: (e.g., Lahore, Karachi, DHA)
@@ -662,22 +677,7 @@ Strict Rules:
 - Until ALL 4 details are collected, politely ask ONLY for the missing details.
 - NEVER output an empty response. Always say something helpful.
 - When ALL 4 variables are collected, YOU MUST OUTPUT EXACTLY THIS JSON FORMAT ON A NEW LINE:
-[PROPERTY_SEARCH: {"bhk":<int>,"budget":<int>,"location":"<str>","purpose":"buy"|"rent"}]
-
-3. Possible User Scenarios & Bot Flow
-- Scenario A: Greeting ("Salam", "Hi")
-  Example Response: "Walaikum Assalam Sir! QORVX Concierge mein khush aamdeed. 🌟 Main aapka personal real estate advisor hoon. Batayen, aaj aap property kharidna chahte hain, ya rent par dekh rahe hain? 🏡"
-
-- Scenario B: Generic Inquiry ("Mujhe ek flat chahiye")
-  Example Response: "Ji bilkul Sir! Hamare paas premium options available hain. Taake main aapko best properties bhej sakun, aap kis city ya area mein dekh rahe hain? 📍"
-
-- Scenario C: Missing Variables ("Lahore mein 4 BHK chahiye")
-  Example Response: "Zabardast choice Sir. Lahore mein 4 BHK ke hamare paas bohot exclusive options hain. Aapka approximate budget (Lakh ya Crore mein) kya hai taake main exactly wahi options nikalun? 💰"
-
-4. Strict Guardrails
-- NEVER output an empty string. Always reply with text.
-- DO NOT hallucinate or invent prices, instalment plans, or properties.
-- Speak naturally like a high-end luxury real estate consultant in Pakistan.
+[PROPERTY_SEARCH: {{"bhk":<int>,"budget":<int>,"location":"<str>","purpose":"buy"|"rent"}}]
 """
 
 @app.get("/")
@@ -784,8 +784,8 @@ async def process_whatsapp_data(data: dict):
                                 last_ai_msg = db_history[-1]["content"] if db_history else ""
 
                                 # ═══ SESSION STATE: Extract & persist parameters ═══
-                                session = get_session(from_number, tenant_id)
-                                extract_and_update_session(msg_body, session, db_history)
+                                # ── Update Core Session Context ──
+                                session = extract_and_update_session(msg_body, from_number, db_history, tenant_id, tenant_config)
                                 logger.info(f"🧠 [SESSION] {from_number}: bhk={session.get('bhk')} loc={session.get('location')} purpose={session.get('purpose')} budget={session.get('budget')} market={session.get('market')}")
 
                                 # =========================================================================================
@@ -1047,7 +1047,7 @@ async def process_whatsapp_data(data: dict):
                                         ai_response = f'[PROPERTY_SEARCH: {{"bhk": {session["bhk"]}, "budget": {session["budget"]}, "location": "{session["location"]}", "purpose": "{session["purpose"]}"}}]'
                                         logger.info(f"Automatic Database Search Triggered: {ai_response}")
                                     else:
-                                        active_prompt = MASTER_SYSTEM_PROMPT
+                                        active_prompt = get_master_system_prompt(session)
                                         active_prompt = build_state_aware_prompt(session, active_prompt)
                                         messages_array = [{"role": "system", "content": active_prompt}]
                                         
