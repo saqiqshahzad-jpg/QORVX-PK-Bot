@@ -1090,16 +1090,37 @@ async def process_whatsapp_data(data: dict):
                                         
                                         # HARD-WIRE THE RESPONSE:
                                         if results and len(results) > 0:
-                                            ai_response = "Sir, yeh rahi aapki match karti hui properties! 🏡\n\n"
+                                            ai_response = "Sir, yeh rahi aapki match karti hui property details! 🏡✨\n\n"
                                             for idx, prop in enumerate(results):
-                                                ptype = str(prop.get("property_type", "Property")).title()
-                                                area = str(prop.get("society_area", session["location"])).title()
-                                                demand = prop.get("demand_pkr", "N/A")
-                                                link = prop.get("main_image", "")
-                                                
-                                                ai_response += f"*{idx+1}. {ptype} in {area}*\n"
-                                                ai_response += f"BHK: {prop.get('bhk', 'N/A')} | Price: PKR {demand}\n"
-                                                ai_response += f"Image Link: {link}\n\n"
+                                                # Flexible helper to get key regardless of casing
+                                                def get_val(key_name, default="N/A"):
+                                                    for k, v in prop.items():
+                                                        if str(k).strip().lower() == key_name.lower() and v:
+                                                            return v
+                                                    return default
+
+                                                ptype = str(get_val("Property_Type", "House")).title()
+                                                city = str(get_val("City", "")).title()
+                                                society = str(get_val("Society_Area", "")).title()
+                                                phase = str(get_val("Phase_Block", ""))
+                                                size = str(get_val("Size", ""))
+                                                bhk_val = get_val("BHK", "N/A")
+                                                demand_val = get_val("Demand_PKR", "N/A")
+                                                img_url = get_val("Main_Image", "")
+
+                                                location_str = f"{society}, {city}" if society else city
+                                                if phase and phase != "N/A":
+                                                    location_str += f" ({phase})"
+
+                                                ai_response += f"📍 *{idx+1}. {ptype} - {location_str}*\n"
+                                                ai_response += f"▫️ *Size:* {size}\n"
+                                                ai_response += f"▫️ *BHK / Rooms:* {bhk_val}\n"
+                                                ai_response += f"▫️ *Demand:* PKR {demand_val:,}\n" if isinstance(demand_val, (int, float)) else f"▫️ *Demand:* PKR {demand_val}\n"
+                                                if img_url and img_url != "N/A":
+                                                    ai_response += f"📸 *Images:* {img_url}\n"
+                                                ai_response += "\n"
+                                            
+                                            ai_response += "Kya aap is property ka visit schedule karna chahte hain? 🤝"
                                         else:
                                             ai_response = f"Sir, filhal PKR {session['budget']} ke budget mein {session['location']} mein hamari inventory sold out hai. 🏢"
                                             
