@@ -33,7 +33,8 @@ from pydantic import BaseModel
 from groq import Groq
 
 # ═══ SESSION STATE & DEDUP STORES ═══
-USER_SESSIONS = {}      # key: "tenant_id:phone" -> {bhk, budget, location, purpose, market, language}
+AGENCY_KEYWORDS = ["al-madina", "dha-estates", "qorvx"]
+USER_SESSIONS = {}      # key: "tenant_id:phone" -> {bhk, budget, location, purpose, market, language, agency_tag}
 PROCESSED_MSG_IDS = {}   # message_id -> timestamp, auto-cleaned after 5 min
 
 # --- MASTER SYSTEM PROMPT ---
@@ -249,7 +250,7 @@ def handle_calendar_booking(date_req: str, time_req: str, phone: str, tenant_id:
         logger.error(f"🚨 Booking Engine Crash: {str(e)}")
         return {"status": "error"}
 
-def query_property_database(listing_type: str, property_type: str, city_society: str, budget: int, tenant_id: str, booking_sheet_name: str, property_sheet_name: str):
+def query_property_database(listing_type: str, property_type: str, city_society: str, budget: int, tenant_id: str, booking_sheet_name: str, property_sheet_name: str, agency_tag: str = None):
     try:
         workspace = GoogleSpreadsheetClient(tenant_id, booking_sheet_name, property_sheet_name)
         sheet = workspace.get_property_sheet()
@@ -293,6 +294,12 @@ def query_property_database(listing_type: str, property_type: str, city_society:
             max_budget = int(budget * 1.25)
             df = df[(df['Demand_PKR'] >= min_budget) & (df['Demand_PKR'] <= max_budget)]
             
+        if agency_tag:
+            tag_lower = agency_tag.strip().lower()
+            if 'Agency_Tag' in df.columns:
+                df['Agency_Tag'] = df['Agency_Tag'].astype(str).str.strip().str.lower()
+                df = df[df['Agency_Tag'] == tag_lower]
+                
         if not df.empty: 
             return df.to_dict(orient="records")
         return []
@@ -508,13 +515,19 @@ def get_session(phone: str, tenant_id: str) -> dict:
     key = f"{tenant_id}:{phone}"
     if key not in USER_SESSIONS:
         USER_SESSIONS[key] = {
-            "listing_type": None, "property_type": None, "city_society": None, "budget": None
+            "listing_type": None, "property_type": None, "city_society": None, "budget": None, "agency_tag": None
         }
     return USER_SESSIONS[key]
 
 def extract_and_update_session(msg_body: str, session: dict, chat_history: list):
     """Extract BHK, Location, Purpose, Budget from current message and update session."""
     msg_lower = msg_body.lower().strip()
+
+    # ── AGENCY TAG detection ──
+    for kw in AGENCY_KEYWORDS:
+        if kw in msg_lower:
+            session["agency_tag"] = kw
+            break
 
     # ── Detect market & language ──
     detected = detect_market(msg_body, chat_history)
@@ -1068,7 +1081,8 @@ async def process_whatsapp_data(data: dict):
                                             c_soc = search_params.get("city_society", session.get("city_society", ""))
                                             budget_val = normalize_budget(str(search_params.get("budget", session.get("budget", 0))))
                                             
-                                            properties_list = query_property_database(l_type, p_type, c_soc, budget_val, tenant_id, booking_sheet_name, property_sheet_name)
+                                            active_agency_tag = session.get("agency_tag")
+                                            properties_list = query_property_database(l_type, p_type, c_soc, budget_val, tenant_id, booking_sheet_name, property_sheet_name, active_agency_tag)
                                             
                                             if properties_list:
                                                 target_properties = properties_list[:3]
