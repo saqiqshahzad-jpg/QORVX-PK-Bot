@@ -34,6 +34,8 @@ from groq import Groq
 
 # ═══ SESSION STATE & DEDUP STORES ═══
 AGENCY_KEYWORDS = ["al-madina", "dha-estates", "qorvx"]
+PK_LOCATION_KEYWORDS = ["karachi", "lahore", "islamabad", "dha", "bahria", "clifton", "gulshan", "rawalpindi", "peshawar", "multan"]
+US_LOCATION_KEYWORDS = ["new york", "texas", "california", "florida", "chicago", "los angeles", "houston", "miami"]
 USER_SESSIONS = {}      # key: "tenant_id:phone" -> {bhk, budget, location, purpose, market, language, agency_tag}
 PROCESSED_MSG_IDS = {}   # message_id -> timestamp, auto-cleaned after 5 min
 
