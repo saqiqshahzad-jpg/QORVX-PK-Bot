@@ -287,52 +287,68 @@ def query_property_database(listing_type: str, bhk: int, city_society: str, budg
         logger.info(f"Successfully fetched {len(records)} records from Google Sheet.")
         df = pd.DataFrame(records)
         
-        if 'Listing_Type' in df.columns:
-            df['Listing_Type'] = df['Listing_Type'].astype(str).str.strip().str.lower()
-        if 'Property_Type' in df.columns:
-            df['Property_Type'] = df['Property_Type'].astype(str).str.strip().str.lower()
-        if 'City' in df.columns:
-            df['City'] = df['City'].astype(str).str.strip().str.lower()
-        if 'Society_Area' in df.columns:
-            df['Society_Area'] = df['Society_Area'].astype(str).str.strip().str.lower()
-        
-        if 'Demand_PKR' in df.columns:
-            df['Demand_PKR'] = pd.to_numeric(df['Demand_PKR'], errors='coerce').fillna(0).astype(int)
-        else:
+        if df.empty:
             return []
-            
-        if listing_type:
-            lt_lower = listing_type.strip().lower()
-            if lt_lower == "buy": lt_lower = "sale"
-            df = df[df['Listing_Type'].str.contains(lt_lower, na=False)]
-            
-        if bhk and 'BHK' in df.columns:
-            df['BHK'] = pd.to_numeric(df['BHK'], errors='coerce').fillna(0).astype(int)
-            df = df[df['BHK'] == bhk]
-            
-        if city_society:
-            cs_lower = city_society.strip().lower()
-            loc_filter = pd.Series(False, index=df.index)
-            if 'City' in df.columns:
-                loc_filter = loc_filter | df['City'].str.contains(cs_lower, na=False)
-            if 'Society_Area' in df.columns:
-                loc_filter = loc_filter | df['Society_Area'].str.contains(cs_lower, na=False)
-            df = df[loc_filter]
-            
-        if budget > 0:
-            min_budget = int(budget * 0.75)
-            max_budget = int(budget * 1.25)
-            df = df[(df['Demand_PKR'] >= min_budget) & (df['Demand_PKR'] <= max_budget)]
-            
+
+        # Helper to get column case-insensitively
+        def get_col(name):
+            return next((c for c in df.columns if str(c).strip().lower() == name.lower()), None)
+
+        # 2. STRICT Agency Tag Isolation
         if agency_tag:
-            tag_lower = agency_tag.strip().lower()
-            # Normalize Google Sheet Column Headers & Filter by agency_tag
-            agency_col = next((col for col in df.columns if str(col).strip().lower() == "agency_tag"), None)
+            active_tag = agency_tag.strip().lower()
+            agency_col = get_col("agency_tag")
             if agency_col:
-                df[agency_col] = df[agency_col].astype(str).str.strip().str.lower()
-                df = df[df[agency_col] == tag_lower]
-                logger.info(f"Filtered {len(df)} properties for agency: {tag_lower}")
-                
+                df = df[df[agency_col].astype(str).str.strip().str.lower() == active_tag]
+                logger.info(f"After Agency Filter '{active_tag}': {len(df)} properties left.")
+        
+        if df.empty:
+            return []
+
+        # 3. DUAL-COLUMN Location Filter (Check both City and Society_Area)
+        if city_society:
+            loc = city_society.strip().lower()
+            city_col = get_col("city")
+            society_col = get_col("society_area")
+            
+            mask_city = df[city_col].astype(str).str.lower().str.contains(loc, na=False) if city_col else pd.Series(False, index=df.index)
+            mask_society = df[society_col].astype(str).str.lower().str.contains(loc, na=False) if society_col else pd.Series(False, index=df.index)
+            
+            df = df[mask_city | mask_society]
+            logger.info(f"After Location Filter: {len(df)} properties left.")
+
+        # 4. Exact Numeric BHK Filter
+        if bhk:
+            bhk_col = get_col("bhk")
+            if bhk_col:
+                df = df[pd.to_numeric(df[bhk_col], errors='coerce') == int(bhk)]
+                logger.info(f"After BHK Filter: {len(df)} properties left.")
+
+        # 5. SOFT Purpose Filter (Don't drop rows if AI guessed wrong, just try to match)
+        if listing_type:
+            purpose = listing_type.strip().lower()
+            if purpose == "buy": purpose = "sale"
+            listing_col = get_col("listing_type")
+            if listing_col:
+                temp_df = df[df[listing_col].astype(str).str.lower().str.contains(purpose, na=False)]
+                # Only apply purpose filter if it actually yields results; otherwise, show what's available
+                if not temp_df.empty:
+                    df = temp_df
+                else:
+                    logger.warning(f"Purpose '{purpose}' yielded 0 matches. Bypassing purpose filter to show available inventory.")
+
+        # 6. Budget Filter
+        if budget > 0:
+            budget_col = get_col("demand_pkr")
+            if budget_col:
+                df[budget_col] = pd.to_numeric(df[budget_col], errors='coerce').fillna(0).astype(int)
+                min_budget = int(budget * 0.75)
+                max_budget = int(budget * 1.25)
+                df = df[(df[budget_col] >= min_budget) & (df[budget_col] <= max_budget)]
+                logger.info(f"After Budget Filter: {len(df)} properties left.")
+
+        logger.info(f"Final filtered properties ready to send: {len(df)}")
+
         if not df.empty: 
             return df.to_dict(orient="records")
         return []
