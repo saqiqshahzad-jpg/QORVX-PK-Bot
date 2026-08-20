@@ -1072,9 +1072,7 @@ async def process_whatsapp_data(data: dict):
                                     detected = detect_market(msg_body, db_history)
                                     
                                     # ═══ AUTO-TRIGGER: Bypass LLM entirely if essential params collected ═══
-                                    if session.get("location") and session.get("bhk"):
-                                        if not session.get("purpose"): session["purpose"] = "buy"
-                                        if not session.get("budget"): session["budget"] = 999999999
+                                    if session.get("purpose") and session.get("location") and session.get("bhk") and session.get("budget"):
                                         ai_response = f'[PROPERTY_SEARCH: {{"bhk": {session["bhk"]}, "budget": {session["budget"]}, "location": "{session["location"]}", "purpose": "{session["purpose"]}"}}]'
                                         logger.info(f"Automatic Database Search Triggered: {ai_response}")
                                     else:
@@ -1155,87 +1153,95 @@ async def process_whatsapp_data(data: dict):
                                         # Session state persist hone ke baad check karein
                                         logger.info(f"Updated Session: {session}")
                                         
-                                        # Agar search_params mil gaye hain to foran sheet query allow karein
-                                        if "PROPERTY_SEARCH" in ai_response and session.get("location") and session.get("bhk"):
-                                            # Default fallback values agar purpose ya budget miss ho
-                                            if not session.get("purpose"): session["purpose"] = "buy"
-                                            if not session.get("budget"): session["budget"] = 999999999
-                                            logger.info(f"Triggering Sheet Search for tenant {tenant_id}...")
-                                        elif "PROPERTY_SEARCH" in ai_response and not session_has_all_params(session):
-                                            missing = []
-                                            if not session.get("purpose"): missing.append("Buy/Rent")
-                                            if not session.get("bhk"): missing.append("BHK")
-                                            if not session.get("location"): missing.append("City/Area")
-                                            if not session.get("budget"): missing.append("Budget")
-                                            missing_str = ", ".join(missing)
+                                        # --- STRICT SEARCH TRIGGER LOGIC ---
+                                        properties_list = None
+                                        
+                                        # Trigger 1: If LLM explicitly decides all info is gathered and outputs the JSON
+                                        if "PROPERTY_SEARCH" in ai_response:
+                                            logger.info(f"Automatic Database Search Triggered by LLM: {ai_response}")
+                                            # Apply fallback ONLY if LLM triggered it but missed the budget
+                                            if not session.get("budget"): 
+                                                session["budget"] = 999999999
+                                                
+                                            l_type = session.get("purpose", "buy")
+                                            properties_list = query_property_database(
+                                                listing_type=l_type,
+                                                bhk=int(session.get("bhk", 0)),
+                                                city_society=session.get("location", ""),
+                                                budget=normalize_budget(str(session.get("budget", 0))),
+                                                tenant_id=tenant_id,
+                                                booking_sheet_name=booking_sheet_name,
+                                                property_sheet_name=property_sheet_name,
+                                                agency_tag=session.get("agency_tag")
+                                            )
                                             
-                                            ai_response = f"Sir, property search shuru karne se pehle, barah-e-karam apna {missing_str} confirm kar dein. 🏛️"
-                                    
-                                    if "PROPERTY_SEARCH" in ai_response and "{" in ai_response and "}" in ai_response:
-                                        try:
-                                            start_idx = ai_response.find("{")
-                                            end_idx = ai_response.rfind("}") + 1
-                                            json_str = ai_response[start_idx:end_idx]
-                                            search_params = json.loads(json_str)
+                                        # Trigger 2: Python State Machine Auto-Trigger (Must strictly have ALL 4 params)
+                                        elif session.get("purpose") and session.get("location") and session.get("bhk") and session.get("budget"):
+                                            logger.info("All 4 session parameters natively collected. Triggering search...")
+                                            l_type = session["purpose"]
+                                            properties_list = query_property_database(
+                                                listing_type=l_type,
+                                                bhk=int(session["bhk"]),
+                                                city_society=session["location"],
+                                                budget=normalize_budget(str(session["budget"])),
+                                                tenant_id=tenant_id,
+                                                booking_sheet_name=booking_sheet_name,
+                                                property_sheet_name=property_sheet_name,
+                                                agency_tag=session.get("agency_tag")
+                                            )
                                             
-                                            l_type = search_params.get("purpose", session.get("purpose", ""))
-                                            bhk_val = int(search_params.get("bhk", session.get("bhk", 0)))
-                                            c_soc = search_params.get("location", session.get("location", ""))
-                                            budget_val = normalize_budget(str(search_params.get("budget", session.get("budget", 0))))
+                                        else:
+                                            # Do NOT trigger search. Let the LLM send the next question to the user.
+                                            logger.info("State machine incomplete. Waiting for user to provide remaining parameters (e.g., budget).")
+                                            pass
                                             
-                                            active_agency_tag = session.get("agency_tag")
-                                            properties_list = query_property_database(l_type, bhk_val, c_soc, budget_val, tenant_id, booking_sheet_name, property_sheet_name, active_agency_tag)
+                                        if properties_list:
+                                            target_properties = properties_list[:3]
+                                            actual_count = len(target_properties)
                                             
-                                            if properties_list:
-                                                target_properties = properties_list[:3]
-                                                actual_count = len(target_properties)
+                                            if l_type.lower() == "rent":
+                                                scan_msg = f"Jee hamare paas {actual_count} premium rental portfolio(s) available hain, abhi dispatch ho rahe hain... 🏛️✨"
+                                            else:
+                                                scan_msg = f"Hamare premium registries scan ho rahi hain. {actual_count} exclusive portfolio(s) abhi dispatch ho rahe hain... 🏛️✨"
+                                            send_whatsapp_text(tenant_id, from_number, scan_msg, whatsapp_token)
+                                            time.sleep(1)
+                                            
+                                            for idx, prop in enumerate(target_properties, start=1):
+                                                media_cols = ['Main_Image', 'Image_2', 'Image_3', 'Image_4', 'Image_5']
+                                                for col in media_cols:
+                                                    img_url = str(prop.get(col, '')).strip()
+                                                    if img_url and img_url.lower() != 'nan' and img_url.startswith('http'):
+                                                        send_whatsapp_media(tenant_id, from_number, img_url, "image", whatsapp_token)
+                                                
+                                                prop_id = prop.get("Property_ID", f"PROP-PK-{idx}")
+                                                budget_fmt = format_currency(int(prop.get('Demand_PKR', 0)))
+                                                title = f"{prop.get('Size', '')} {prop.get('Property_Type', '')} in {prop.get('Society_Area', '')}"
+                                                location = f"{prop.get('Phase_Block', '')}, {prop.get('City', '')}"
                                                 
                                                 if l_type.lower() == "rent":
-                                                    scan_msg = f"Jee hamare paas {actual_count} premium rental portfolio(s) available hain, abhi dispatch ho rahe hain... 🏛️✨"
+                                                    property_text = f"🏛️ *RENTAL MATCH*\n\n📌 *Asset:* {title}\n💵 *Rent:* PKR {budget_fmt}/month\n📍 *Location:* {location}"
                                                 else:
-                                                    scan_msg = f"Hamare premium registries scan ho rahi hain. {actual_count} exclusive portfolio(s) abhi dispatch ho rahe hain... 🏛️✨"
-                                                send_whatsapp_text(tenant_id, from_number, scan_msg, whatsapp_token)
-                                                time.sleep(1)
+                                                    property_text = f"🏛️ *EXCLUSIVE ASSET MATCH*\n\n📌 *Asset:* {title}\n💵 *Demand:* PKR {budget_fmt}\n📍 *Location:* {location}"
                                                 
-                                                for idx, prop in enumerate(target_properties, start=1):
-                                                    media_cols = ['Main_Image', 'Image_2', 'Image_3', 'Image_4', 'Image_5']
-                                                    for col in media_cols:
-                                                        img_url = str(prop.get(col, '')).strip()
-                                                        if img_url and img_url.lower() != 'nan' and img_url.startswith('http'):
-                                                            send_whatsapp_media(tenant_id, from_number, img_url, "image", whatsapp_token)
-                                                    
-                                                    prop_id = prop.get("Property_ID", f"PROP-PK-{idx}")
-                                                    budget_fmt = format_currency(int(prop.get('Demand_PKR', 0)))
-                                                    title = f"{prop.get('Size', '')} {prop.get('Property_Type', '')} in {prop.get('Society_Area', '')}"
-                                                    location = f"{prop.get('Phase_Block', '')}, {prop.get('City', '')}"
-                                                    
-                                                    if l_type.lower() == "rent":
-                                                        property_text = f"🏛️ *RENTAL MATCH*\n\n📌 *Asset:* {title}\n💵 *Rent:* PKR {budget_fmt}/month\n📍 *Location:* {location}"
-                                                    else:
-                                                        property_text = f"🏛️ *EXCLUSIVE ASSET MATCH*\n\n📌 *Asset:* {title}\n💵 *Demand:* PKR {budget_fmt}\n📍 *Location:* {location}"
-                                                    
-                                                    send_property_button(tenant_id, from_number, property_text, prop_id, whatsapp_token)
-                                                    
-                                                    video_url = str(prop.get('Video', '')).strip()
-                                                    if video_url and video_url.lower() != 'nan' and video_url.startswith('http'):
-                                                        video_text = f"🎥 *Exclusive Walkthrough Tour*\n{video_url}"
-                                                        send_whatsapp_text(tenant_id, from_number, video_text, whatsapp_token)
+                                                send_property_button(tenant_id, from_number, property_text, prop_id, whatsapp_token)
+                                                
+                                                video_url = str(prop.get('Video', '')).strip()
+                                                if video_url and video_url.lower() != 'nan' and video_url.startswith('http'):
+                                                    video_text = f"🎥 *Exclusive Walkthrough Tour*\n{video_url}"
+                                                    send_whatsapp_text(tenant_id, from_number, video_text, whatsapp_token)
 
-                                                ai_response = "Is property ki private site visit schedule karne ke liye barah-e-karam apna Poora Naam aur Email share karein taake humari team raabta kare. ✨"
-                                                
-                                                # Reset session after successful property search
-                                                session.update({"purpose": None, "bhk": None, "location": None, "budget": None})
-                                                
-                                                save_supabase_message(from_number, "user", msg_body, tenant_id)
-                                                save_supabase_message(from_number, "assistant", ai_response, tenant_id)
-                                                send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
-                                                return PlainTextResponse(content="OK", status_code=200)
+                                            ai_response = "Is property ki private site visit schedule karne ke liye barah-e-karam apna Poora Naam aur Email share karein taake humari team raabta kare. ✨"
+                                            
+                                            # Reset session after successful property search
+                                            session.update({"purpose": None, "bhk": None, "location": None, "budget": None})
+                                            
+                                            save_supabase_message(from_number, "user", msg_body, tenant_id)
+                                            save_supabase_message(from_number, "assistant", ai_response, tenant_id)
+                                            send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
+                                            return PlainTextResponse(content="OK", status_code=200)
 
-                                            else:
-                                                ai_response = "Sir, filhal is exact specific block mein hamari inventory sold out hai. Lekin is budget mein mere paas DHA Phase 8 ya Bahria Town mein behtareen options hain. Kya main unki details bhejun? 🏛️"
-                                        except Exception as e: 
-                                            logger.error(f"🚨 RAG LLM JSON Parse Crash: {str(e)}")
-                                            ai_response = "Aapki luxury portfolio request process ho rahi hai. Kya aap apna target BHK, budget, location, aur purpose (Buy/Rent) confirm kar sakte hain? 🏛️"
+                                        elif properties_list is not None:
+                                            ai_response = "Sir, filhal is exact specific block mein hamari inventory sold out hai. Lekin is budget mein mere paas DHA Phase 8 ya Bahria Town mein behtareen options hain. Kya main unki details bhejun? 🏛️"
 
                                     # 🔥 ULTIMATE SANITIZER (NO GHOSTING)
                                     # Agar LLM ne completely invalid text (like raw dict) daala jo parse nahi hua, 
