@@ -310,9 +310,12 @@ def query_property_database(listing_type: str, bhk: int, city_society: str, budg
             
         if agency_tag:
             tag_lower = agency_tag.strip().lower()
-            if 'Agency_Tag' in df.columns:
-                df['Agency_Tag'] = df['Agency_Tag'].astype(str).str.strip().str.lower()
-                df = df[df['Agency_Tag'] == tag_lower]
+            # Normalize Google Sheet Column Headers & Filter by agency_tag
+            agency_col = next((col for col in df.columns if str(col).strip().lower() == "agency_tag"), None)
+            if agency_col:
+                df[agency_col] = df[agency_col].astype(str).str.strip().str.lower()
+                df = df[df[agency_col] == tag_lower]
+                logger.info(f"Filtered {len(df)} properties for agency: {tag_lower}")
                 
         if not df.empty: 
             return df.to_dict(orient="records")
@@ -538,10 +541,15 @@ def extract_and_update_session(msg_body: str, session: dict, chat_history: list)
     msg_lower = msg_body.lower().strip()
 
     # ── AGENCY TAG detection ──
-    for kw in AGENCY_KEYWORDS:
-        if kw in msg_lower:
-            session["agency_tag"] = kw
-            break
+    # Dynamic Agency Tag Parsing
+    if "madina" in msg_lower or "madina_estate" in msg_lower:
+        session["agency_tag"] = "Madina_Estate"
+        logger.info(f"Agency tag locked: {session['agency_tag']}")
+    else:
+        for kw in AGENCY_KEYWORDS:
+            if kw in msg_lower:
+                session["agency_tag"] = kw
+                break
 
     # ── Detect market & language ──
     detected = detect_market(msg_body, chat_history)
@@ -1032,9 +1040,12 @@ async def process_whatsapp_data(data: dict):
                                 else:
                                     detected = detect_market(msg_body, db_history)
                                     
-                                    # ═══ AUTO-TRIGGER: If all 4 params collected, bypass LLM entirely ═══
-                                    if session_has_all_params(session):
+                                    # ═══ AUTO-TRIGGER: Bypass LLM entirely if essential params collected ═══
+                                    if session.get("location") and session.get("bhk"):
+                                        if not session.get("purpose"): session["purpose"] = "buy"
+                                        if not session.get("budget"): session["budget"] = 999999999
                                         ai_response = f'[PROPERTY_SEARCH: {{"bhk": {session["bhk"]}, "budget": {session["budget"]}, "location": "{session["location"]}", "purpose": "{session["purpose"]}"}}]'
+                                        logger.info(f"Automatic Database Search Triggered: {ai_response}")
                                     else:
                                         active_prompt = MASTER_SYSTEM_PROMPT
                                         active_prompt = build_state_aware_prompt(session, active_prompt)
