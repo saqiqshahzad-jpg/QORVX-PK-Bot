@@ -57,8 +57,8 @@ RESEND_API_KEY = os.environ.get("RESEND_API_KEY")
 MY_VERIFY_TOKEN = os.environ.get("WHATSAPP_VERIFY_TOKEN", "ALAAUDIN_SECRET_TOKEN")
 
 client = Groq(api_key=GROQ_API_KEY, max_retries=0)
-MODEL_ID = "llama-3.3-70b-versatile"
-FALLBACK_MODEL = "llama-3.1-8b-instant"
+MODEL_ID = "llama3-70b-8192"
+FALLBACK_MODEL = "mixtral-8x7b-32768"
 
 def robust_chat_completion(messages_array, temperature, max_tokens):
     try:
