@@ -201,10 +201,15 @@ class GoogleSpreadsheetClient:
 # =========================================================================================
 def handle_calendar_booking(date_req: str, time_req: str, phone: str, tenant_id: str, booking_sheet_name: str, property_sheet_name: str):
     try:
+        logger.info(f"Initializing GoogleSpreadsheetClient for calendar booking. Tenant: {tenant_id}")
         workspace = GoogleSpreadsheetClient(tenant_id, booking_sheet_name, property_sheet_name)
         
+        logger.info(f"Opening booking sheet: {booking_sheet_name}")
         sheet = workspace.gc.open(booking_sheet_name).sheet1
+        
+        logger.info("Fetching all values from booking sheet to check if empty...")
         if not sheet.get_all_values():
+            logger.info("Booking sheet is empty. Appending header row...")
             sheet.append_row(["Date", "Time", "Client_Name", "Phone", "Email", "Status"])
 
         valid_slots = ["12:00 pm", "1:00 pm", "2:00 pm", "3:00 pm", "4:00 pm", "5:00 pm"]
@@ -222,7 +227,9 @@ def handle_calendar_booking(date_req: str, time_req: str, phone: str, tenant_id:
             
         d_clean = date_req.strip().lower()
         
+        logger.info("Fetching all records from booking sheet...")
         records = sheet.get_all_records()
+        logger.info(f"Successfully fetched {len(records)} records from booking sheet.")
         df = pd.DataFrame(records)
         
         booked_times = []
@@ -241,7 +248,9 @@ def handle_calendar_booking(date_req: str, time_req: str, phone: str, tenant_id:
             available.sort(key=lambda x: abs(valid_slots.index(x) - target_idx))
             return {"status": "taken", "alternative": available[0].upper()}
         else:
+            logger.info(f"Appending new booking row for Date: {date_req}, Time: {matched_slot.upper()}")
             sheet.append_row([date_req, matched_slot.upper(), "Pending Client", phone, "Pending Email", "Booked 🚫"])
+            logger.info("Booking row appended successfully.")
             return {"status": "success", "slot": matched_slot.upper()}
             
     except Exception as e:
@@ -250,10 +259,17 @@ def handle_calendar_booking(date_req: str, time_req: str, phone: str, tenant_id:
 
 def query_property_database(listing_type: str, bhk: int, city_society: str, budget: int, tenant_id: str, booking_sheet_name: str, property_sheet_name: str, agency_tag: str = None):
     try:
+        logger.info(f"Initializing GoogleSpreadsheetClient for tenant: {tenant_id}, booking_sheet: {booking_sheet_name}, property_sheet: {property_sheet_name}")
         workspace = GoogleSpreadsheetClient(tenant_id, booking_sheet_name, property_sheet_name)
+        
+        logger.info("Fetching property sheet...")
         sheet = workspace.get_property_sheet()
         import pandas as pd
-        df = pd.DataFrame(sheet.get_all_records())
+        
+        logger.info("Fetching all records from the property sheet...")
+        records = sheet.get_all_records()
+        logger.info(f"Successfully fetched {len(records)} records from Google Sheet.")
+        df = pd.DataFrame(records)
         
         if 'Listing_Type' in df.columns:
             df['Listing_Type'] = df['Listing_Type'].astype(str).str.strip().str.lower()
@@ -959,8 +975,12 @@ async def process_whatsapp_data(data: dict):
                                             
                                     # 🔥 Broadcast Lead to Client's FREE Google Sheet (DUAL-MARKET TAGGED)
                                     try:
+                                        logger.info(f"Initializing GoogleSpreadsheetClient to append lead. Tenant: {tenant_id}")
                                         workspace = GoogleSpreadsheetClient(tenant_id, booking_sheet_name, property_sheet_name)
+                                        
+                                        logger.info(f"Appending lead record to Google Sheet for phone: {from_number}, email: {client_email}")
                                         workspace.append_lead_record(from_number, extracted_name, client_email, target_prop_id, "PK")
+                                        logger.info("Successfully appended lead record to Google Sheet.")
                                     except Exception as e:
                                         logger.error(f"🚨 Google Sheet Lead Sync Failed: {e}")
 
