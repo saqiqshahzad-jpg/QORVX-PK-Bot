@@ -1061,6 +1061,20 @@ async def process_whatsapp_data(data: dict):
                                         ai_response = completion.choices[0].message.content
                                         
                                         # 🛡️ PREMATURE QUERY PREVENTION
+                                        if "PROPERTY_SEARCH" in ai_response and "{" in ai_response and "}" in ai_response:
+                                            try:
+                                                start_idx = ai_response.find("{")
+                                                end_idx = ai_response.rfind("}") + 1
+                                                json_str = ai_response[start_idx:end_idx]
+                                                search_params = json.loads(json_str)
+                                                
+                                                if search_params.get("purpose"): session["purpose"] = search_params.get("purpose")
+                                                if search_params.get("bhk"): session["bhk"] = int(search_params.get("bhk"))
+                                                if search_params.get("location"): session["location"] = search_params.get("location")
+                                                if search_params.get("budget"): session["budget"] = normalize_budget(str(search_params.get("budget")))
+                                            except:
+                                                pass
+                                                
                                         if "PROPERTY_SEARCH" in ai_response and not session_has_all_params(session):
                                             missing = []
                                             if not session.get("purpose"): missing.append("Buy/Rent")
