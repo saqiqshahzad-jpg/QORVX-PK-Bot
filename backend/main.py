@@ -371,15 +371,22 @@ def send_whatsapp_text(tenant_id: str, to_number: str, text_body: str, whatsapp_
     except Exception as e: 
         logger.error(f"🚨 [SEND TEXT CRASH] To: {to_number} | Error: {str(e)}")
 
-def send_whatsapp_media(tenant_id: str, to_number: str, media_url: str, media_type: str, whatsapp_token: str):
+def send_whatsapp_media(tenant_id: str, to_number: str, media_url: str, media_type: str, whatsapp_token: str, caption: str = None):
     url = f"https://graph.facebook.com/v25.0/{tenant_id}/messages"
     headers = {"Authorization": f"Bearer {whatsapp_token}", "Content-Type": "application/json"}
-    payload = {"messaging_product": "whatsapp", "recipient_type": "individual", "to": to_number, "type": media_type, media_type: {"link": media_url}}
+    media_payload = {"link": media_url}
+    if caption:
+        media_payload["caption"] = caption
+    payload = {"messaging_product": "whatsapp", "recipient_type": "individual", "to": to_number, "type": media_type, media_type: media_payload}
     try: 
         res = requests.post(url, headers=headers, json=payload, timeout=10)
         logger.info(f"🎬 [META MEDIA RESPONSE] Status: {res.status_code} | Body: {res.text}")
+        if res.status_code == 200:
+            return True
+        return False
     except Exception as e: 
         logger.info(f"🚨 [META MEDIA CRASH] {str(e)}")
+        return False
 
 def send_whatsapp_buttons(tenant_id: str, to_number: str, body_text: str, buttons_list: list, whatsapp_token: str):
     url = f"https://graph.facebook.com/v25.0/{tenant_id}/messages"
@@ -1090,7 +1097,10 @@ async def process_whatsapp_data(data: dict):
                                         
                                         # HARD-WIRE THE RESPONSE:
                                         if results and len(results) > 0:
-                                            ai_response = "Sir, yeh rahi aapki match karti hui property details! 🏡✨\n\n"
+                                            intro_text = "Sir, yeh rahi aapki match karti hui property details! 🏡✨"
+                                            send_whatsapp_text(tenant_id, from_number, intro_text, whatsapp_token)
+                                            full_ai_text = intro_text + "\n\n"
+                                            
                                             for idx, prop in enumerate(results):
                                                 # Flexible helper to get key regardless of casing
                                                 def get_val(key_name, default="N/A"):
@@ -1112,15 +1122,32 @@ async def process_whatsapp_data(data: dict):
                                                 if phase and phase != "N/A":
                                                     location_str += f" ({phase})"
 
-                                                ai_response += f"📍 *{idx+1}. {ptype} - {location_str}*\n"
-                                                ai_response += f"▫️ *Size:* {size}\n"
-                                                ai_response += f"▫️ *BHK / Rooms:* {bhk_val}\n"
-                                                ai_response += f"▫️ *Demand:* PKR {demand_val:,}\n" if isinstance(demand_val, (int, float)) else f"▫️ *Demand:* PKR {demand_val}\n"
-                                                if img_url and img_url != "N/A":
-                                                    ai_response += f"📸 *Images:* {img_url}\n"
-                                                ai_response += "\n"
+                                                prop_msg = f"📍 *{idx+1}. {ptype} - {location_str}*\n"
+                                                prop_msg += f"▫️ *Size:* {size}\n"
+                                                prop_msg += f"▫️ *BHK / Rooms:* {bhk_val}\n"
+                                                prop_msg += f"▫️ *Demand:* PKR {demand_val:,}\n" if isinstance(demand_val, (int, float)) else f"▫️ *Demand:* PKR {demand_val}\n"
+                                                
+                                                full_ai_text += prop_msg
+                                                media_sent = False
+                                                if img_url and img_url != "N/A" and str(img_url).startswith("http"):
+                                                    media_sent = send_whatsapp_media(tenant_id, from_number, img_url, "image", whatsapp_token, caption=prop_msg)
+                                                
+                                                if not media_sent:
+                                                    if img_url and img_url != "N/A":
+                                                        prop_msg += f"📸 *Images:* {img_url}\n"
+                                                        full_ai_text += f"📸 *Images:* {img_url}\n"
+                                                    send_whatsapp_text(tenant_id, from_number, prop_msg, whatsapp_token)
+                                                full_ai_text += "\n"
                                             
-                                            ai_response += "Kya aap is property ka visit schedule karna chahte hain? 🤝"
+                                            outro_msg = "Kya aap is property ka visit schedule karna chahte hain? 🤝"
+                                            send_whatsapp_text(tenant_id, from_number, outro_msg, whatsapp_token)
+                                            full_ai_text += outro_msg
+                                            ai_response = full_ai_text
+                                            
+                                            session.update({"purpose": None, "bhk": None, "location": None, "budget": None})
+                                            save_supabase_message(from_number, "user", msg_body, tenant_id)
+                                            save_supabase_message(from_number, "assistant", ai_response, tenant_id)
+                                            return PlainTextResponse(content="OK", status_code=200)
                                         else:
                                             ai_response = f"Sir, filhal PKR {session['budget']} ke budget mein {session['location']} mein hamari inventory sold out hai. 🏢"
                                             
