@@ -341,11 +341,13 @@ def query_property_database(listing_type: str, bhk: int, city_society: str, budg
         if budget > 0:
             budget_col = get_col("demand_pkr")
             if budget_col:
-                df[budget_col] = pd.to_numeric(df[budget_col], errors='coerce').fillna(0).astype(int)
-                min_budget = int(budget * 0.75)
-                max_budget = int(budget * 1.25)
-                df = df[(df[budget_col] >= min_budget) & (df[budget_col] <= max_budget)]
-                logger.info(f"After Budget Filter: {len(df)} properties left.")
+                try:
+                    max_budget = float(budget)
+                    df_demand = pd.to_numeric(df[budget_col], errors='coerce')
+                    df = df[(df_demand <= max_budget) | (df_demand.isna())]
+                    logger.info(f"After Budget Filter: {len(df)} properties left.")
+                except Exception:
+                    pass
 
         logger.info(f"Final filtered properties ready to send: {len(df)}")
 
@@ -1071,10 +1073,38 @@ async def process_whatsapp_data(data: dict):
                                 else:
                                     detected = detect_market(msg_body, db_history)
                                     
-                                    # ═══ AUTO-TRIGGER: Bypass LLM entirely if essential params collected ═══
+                                    # --- STRICT FINAL RESPONSE TRIGGER (Bypass LLM) ---
                                     if session.get("purpose") and session.get("location") and session.get("bhk") and session.get("budget"):
-                                        ai_response = f'[PROPERTY_SEARCH: {{"bhk": {session["bhk"]}, "budget": {session["budget"]}, "location": "{session["location"]}", "purpose": "{session["purpose"]}"}}]'
-                                        logger.info(f"Automatic Database Search Triggered: {ai_response}")
+                                        logger.info("All 4 params collected! Bypassing LLM and querying DB.")
+                                        
+                                        results = query_property_database(
+                                            listing_type=session["purpose"],
+                                            bhk=session["bhk"],
+                                            city_society=session["location"],
+                                            budget=session["budget"],
+                                            tenant_id=tenant_id,
+                                            booking_sheet_name=booking_sheet_name,
+                                            property_sheet_name=property_sheet_name,
+                                            agency_tag=session.get("agency_tag")
+                                        )
+                                        
+                                        # HARD-WIRE THE RESPONSE:
+                                        if results and len(results) > 0:
+                                            ai_response = "Sir, yeh rahi aapki match karti hui properties! 🏡\n\n"
+                                            for idx, prop in enumerate(results):
+                                                ptype = str(prop.get("property_type", "Property")).title()
+                                                area = str(prop.get("society_area", session["location"])).title()
+                                                demand = prop.get("demand_pkr", "N/A")
+                                                link = prop.get("main_image", "")
+                                                
+                                                ai_response += f"*{idx+1}. {ptype} in {area}*\n"
+                                                ai_response += f"BHK: {prop.get('bhk', 'N/A')} | Price: PKR {demand}\n"
+                                                ai_response += f"Image Link: {link}\n\n"
+                                        else:
+                                            ai_response = f"Sir, filhal PKR {session['budget']} ke budget mein {session['location']} mein hamari inventory sold out hai. 🏢"
+                                            
+                                        # Reset session after successful property search
+                                        session.update({"purpose": None, "bhk": None, "location": None, "budget": None})
                                     else:
                                         active_prompt = get_master_system_prompt(session)
                                         active_prompt = build_state_aware_prompt(session, active_prompt)
@@ -1169,21 +1199,6 @@ async def process_whatsapp_data(data: dict):
                                                 bhk=int(session.get("bhk", 0)),
                                                 city_society=session.get("location", ""),
                                                 budget=normalize_budget(str(session.get("budget", 0))),
-                                                tenant_id=tenant_id,
-                                                booking_sheet_name=booking_sheet_name,
-                                                property_sheet_name=property_sheet_name,
-                                                agency_tag=session.get("agency_tag")
-                                            )
-                                            
-                                        # Trigger 2: Python State Machine Auto-Trigger (Must strictly have ALL 4 params)
-                                        elif session.get("purpose") and session.get("location") and session.get("bhk") and session.get("budget"):
-                                            logger.info("All 4 session parameters natively collected. Triggering search...")
-                                            l_type = session["purpose"]
-                                            properties_list = query_property_database(
-                                                listing_type=l_type,
-                                                bhk=int(session["bhk"]),
-                                                city_society=session["location"],
-                                                budget=normalize_budget(str(session["budget"])),
                                                 tenant_id=tenant_id,
                                                 booking_sheet_name=booking_sheet_name,
                                                 property_sheet_name=property_sheet_name,
