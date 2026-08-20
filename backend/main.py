@@ -1061,22 +1061,39 @@ async def process_whatsapp_data(data: dict):
                                         ai_response = completion.choices[0].message.content
                                         logger.info(f"🧠 [RAW LLM RESPONSE] {ai_response}")
                                         
-                                        # 🛡️ PREMATURE QUERY PREVENTION
-                                        if "PROPERTY_SEARCH" in ai_response and "{" in ai_response and "}" in ai_response:
+                                        # --- FIXED JSON PARSER & SESSION EXTRACTOR ---
+                                        if "PROPERTY_SEARCH" in ai_response:
                                             try:
                                                 start_idx = ai_response.find("{")
                                                 end_idx = ai_response.rfind("}") + 1
-                                                json_str = ai_response[start_idx:end_idx]
-                                                search_params = json.loads(json_str)
+                                                if start_idx != -1 and end_idx != -1:
+                                                    json_str = ai_response[start_idx:end_idx]
+                                                    search_params = json.loads(json_str)
+                                        
+                                                    # Map possible variations
+                                                    purpose = search_params.get("purpose") or search_params.get("Listing_Type") or "buy"
+                                                    bhk = search_params.get("bhk") or search_params.get("BHK")
+                                                    location = search_params.get("location") or search_params.get("City") or search_params.get("Society_Area")
+                                                    raw_budget = search_params.get("budget") or search_params.get("Demand_PKR")
+                                        
+                                                    if purpose:
+                                                        session["purpose"] = str(purpose).strip().lower()
+                                                    if bhk:
+                                                        session["bhk"] = int(bhk)
+                                                    if location:
+                                                        session["location"] = str(location).strip()
+                                                    if raw_budget:
+                                                        session["budget"] = normalize_budget(str(raw_budget))
+                                            except Exception as e:
+                                                logger.error(f"JSON Parse Error: {e}")
                                                 
-                                                if search_params.get("purpose"): session["purpose"] = search_params.get("purpose")
-                                                if search_params.get("bhk"): session["bhk"] = int(search_params.get("bhk"))
-                                                if search_params.get("location"): session["location"] = search_params.get("location")
-                                                if search_params.get("budget"): session["budget"] = normalize_budget(str(search_params.get("budget")))
-                                            except:
-                                                pass
-                                                
-                                        if "PROPERTY_SEARCH" in ai_response and not session_has_all_params(session):
+                                        # Agar search_params mil gaye hain to foran sheet query allow karein
+                                        if "PROPERTY_SEARCH" in ai_response and session.get("location") and session.get("bhk"):
+                                            # Default fallback values agar purpose ya budget miss ho
+                                            if not session.get("purpose"): session["purpose"] = "buy"
+                                            if not session.get("budget"): session["budget"] = 999999999
+                                            logger.info(f"Triggering Sheet Search for tenant {tenant_id}...")
+                                        elif "PROPERTY_SEARCH" in ai_response and not session_has_all_params(session):
                                             missing = []
                                             if not session.get("purpose"): missing.append("Buy/Rent")
                                             if not session.get("bhk"): missing.append("BHK")
