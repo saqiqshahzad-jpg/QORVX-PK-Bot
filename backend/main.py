@@ -361,6 +361,78 @@ def query_property_database(listing_type: str, bhk: int, city_society: str, budg
 # =========================================================================================
 # 📲 DYNAMIC TENANT WHATSAPP ROUTING
 # =========================================================================================
+def send_property_media_sequence(to_number: str, prop: dict, tenant_id: str, access_token: str):
+    # 1. Collect all image URLs (Main_Image, Image_2, ..., Image_9)
+    image_keys = [k for k in prop.keys() if "image" in str(k).lower()]
+    image_urls = []
+    for k in image_keys:
+        url = str(prop.get(k, "")).strip()
+        if url and url.startswith("http") and url != "N/A":
+            image_urls.append(url)
+
+    # 2. Collect video URL if present
+    video_url = str(prop.get("video") or prop.get("Video") or "").strip()
+
+    # 3. Dispatch Images sequentially
+    for idx, img_url in enumerate(image_urls):
+        caption = f"Photo {idx+1}/{len(image_urls)}" if idx > 0 else f"📸 Main View: {prop.get('Society_Area', '')}"
+        send_whatsapp_media(tenant_id, to_number, img_url, "image", access_token, caption=caption)
+
+    # 4. Dispatch Video if exists
+    if video_url and video_url.startswith("http") and video_url != "N/A":
+        send_whatsapp_media(tenant_id, to_number, video_url, "video", access_token, caption="🎥 Property Walkthrough Video")
+
+def send_whatsapp_quick_reply_buttons(to_number: str, body_text: str, tenant_id: str, access_token: str):
+    url = f"https://graph.facebook.com/v25.0/{tenant_id}/messages"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": to_number,
+        "type": "interactive",
+        "interactive": {
+            "type": "button",
+            "body": {
+                "text": body_text
+            },
+            "action": {
+                "buttons": [
+                    {
+                        "type": "reply",
+                        "reply": {
+                            "id": "btn_cheaper",
+                            "title": "Sasti Option 📉"
+                        }
+                    },
+                    {
+                        "type": "reply",
+                        "reply": {
+                            "id": "btn_next",
+                            "title": "Koi Aur Option 🔄"
+                        }
+                    },
+                    {
+                        "type": "reply",
+                        "reply": {
+                            "id": "btn_visit",
+                            "title": "Visit Schedule 📅"
+                        }
+                    }
+                ]
+            }
+        }
+    }
+    try:
+        res = requests.post(url, headers=headers, json=payload, timeout=10)
+        logger.info(f"📤 [SEND QUICK REPLIES] Status: {res.status_code} | Body: {res.text[:200]}")
+        return res
+    except Exception as e:
+        logger.error(f"🚨 [SEND QUICK REPLIES CRASH] {str(e)}")
+        return None
+
 def send_whatsapp_text(tenant_id: str, to_number: str, text_body: str, whatsapp_token: str):
     url = f"https://graph.facebook.com/v25.0/{tenant_id}/messages"
     headers = {"Authorization": f"Bearer {whatsapp_token}", "Content-Type": "application/json"}
@@ -828,6 +900,24 @@ async def process_whatsapp_data(data: dict):
                                 session = extract_and_update_session(msg_body, from_number, db_history, tenant_id, tenant_config)
                                 logger.info(f"🧠 [SESSION] {from_number}: bhk={session.get('bhk')} loc={session.get('location')} purpose={session.get('purpose')} budget={session.get('budget')} market={session.get('market')}")
 
+                                # Check if user clicked an interactive quick reply button
+                                interactive = message.get("interactive", {})
+                                if interactive.get("type") == "button_reply":
+                                    button_id = interactive["button_reply"]["id"]
+                                    button_title = interactive["button_reply"]["title"]
+                                    logger.info(f"Button Clicked: {button_id} ({button_title})")
+                                    
+                                    # Map button actions to session logic
+                                    if button_id == "btn_cheaper":
+                                        # Lower the max budget filter and query again
+                                        session["budget"] = float(session.get("budget", 50000000)) * 0.8
+                                    elif button_id == "btn_next":
+                                        # Pivot to next available listing in inventory
+                                        pass
+                                    elif button_id == "btn_visit":
+                                        # Trigger booking calendar flow
+                                        pass
+
                                 # =========================================================================================
                                 # 🏠 STATE-MACHINE INTERCEPTORS: BUYER INTAKE FUNNEL
                                 # =========================================================================================
@@ -1128,19 +1218,17 @@ async def process_whatsapp_data(data: dict):
                                                 prop_msg += f"▫️ *Demand:* PKR {demand_val:,}\n" if isinstance(demand_val, (int, float)) else f"▫️ *Demand:* PKR {demand_val}\n"
                                                 
                                                 full_ai_text += prop_msg
-                                                media_sent = False
-                                                if img_url and img_url != "N/A" and str(img_url).startswith("http"):
-                                                    media_sent = send_whatsapp_media(tenant_id, from_number, img_url, "image", whatsapp_token, caption=prop_msg)
                                                 
-                                                if not media_sent:
-                                                    if img_url and img_url != "N/A":
-                                                        prop_msg += f"📸 *Images:* {img_url}\n"
-                                                        full_ai_text += f"📸 *Images:* {img_url}\n"
-                                                    send_whatsapp_text(tenant_id, from_number, prop_msg, whatsapp_token)
+                                                # Send the property summary FIRST as text
+                                                send_whatsapp_text(tenant_id, from_number, prop_msg, whatsapp_token)
+                                                
+                                                # Dispatch Multi-Media Sequence (All Images + Video)
+                                                send_property_media_sequence(from_number, prop, tenant_id, whatsapp_token)
+                                                
                                                 full_ai_text += "\n"
                                             
-                                            outro_msg = "Kya aap is property ka visit schedule karna chahte hain? 🤝"
-                                            send_whatsapp_text(tenant_id, from_number, outro_msg, whatsapp_token)
+                                            outro_msg = "Kya aap in properties ka visit schedule karna chahte hain? 🤝"
+                                            send_whatsapp_quick_reply_buttons(from_number, outro_msg, tenant_id, whatsapp_token)
                                             full_ai_text += outro_msg
                                             ai_response = full_ai_text
                                             
