@@ -35,7 +35,6 @@ from groq import Groq
 # ═══ SESSION STATE & DEDUP STORES ═══
 AGENCY_KEYWORDS = ["al-madina", "dha-estates", "qorvx"]
 PK_LOCATION_KEYWORDS = ["karachi", "lahore", "islamabad", "dha", "bahria", "clifton", "gulshan", "rawalpindi", "peshawar", "multan"]
-US_LOCATION_KEYWORDS = ["new york", "texas", "california", "florida", "chicago", "los angeles", "houston", "miami"]
 USER_SESSIONS = {}      # key: "tenant_id:phone" -> {bhk, budget, location, purpose, market, language, agency_tag}
 PROCESSED_MSG_IDS = {}   # message_id -> timestamp, auto-cleaned after 5 min
 
@@ -568,11 +567,6 @@ def extract_and_update_session(msg_body: str, session: dict, chat_history: list)
             if kw in msg_lower:
                 session["location"] = msg_body.strip().title()
                 break
-        if not session.get("location"):
-            for kw in US_LOCATION_KEYWORDS:
-                if kw in msg_lower:
-                    session["location"] = msg_body.strip().title()
-                    break
         # Context: AI asked for location and user gave short answer
         if not session.get("location") and len(msg_body.split()) <= 3:
             if any(kw in last_ai_content for kw in ["location", "city", "area", "jagah", "shehar", "ilaq", "kidhar", "preferred location"]):
@@ -581,7 +575,7 @@ def extract_and_update_session(msg_body: str, session: dict, chat_history: list)
 
     # ── BUDGET detection ──
     if not session.get("budget"):
-        budget_val = normalize_budget(msg_body, session.get("market", ""))
+        budget_val = normalize_budget(msg_body)
         if budget_val > 10:
             session["budget"] = budget_val
         elif budget_val > 0 and session.get("bhk"):
