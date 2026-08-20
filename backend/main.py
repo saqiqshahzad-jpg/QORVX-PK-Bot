@@ -761,21 +761,18 @@ def session_has_all_params(session: dict) -> bool:
     return all([session.get("purpose"), session.get("bhk"), session.get("location"), session.get("budget")])
 
 def get_master_system_prompt(session: dict) -> str:
-    # Safely get the agency_tag, fallback to generic string if None or empty
     current_agency = session.get("agency_tag")
-    if not current_agency:
-        current_agency = "Our Real Estate Agency"
-        
-    formatted_agency_name = str(current_agency).replace("_", " ").title()
-    return f"""Identity: Aap {formatted_agency_name} ke smart aur friendly AI Real Estate Consultant hain.
+    formatted_agency = str(current_agency).replace("_", " ").title() if current_agency else "Our Real Estate Agency"
 
-CORE RULES & PERSONA:
-1. STRICT AGENCY LOYALTY: Aap sirf aur sirf '{formatted_agency_name}' ko represent karte hain. Aapka kaam sirf apni agency ki properties recommend karna hai.
-2. OUT OF BOUNDS: Agar user kisi aur real estate agency ka naam le ya uski property mange, toh friendly tone mein politely mana kar dein aur bolein: "Maaf kijiyega, main sirf {formatted_agency_name} ki properties mein deal karta hoon."
-3. DOMAIN RESTRICTION: Sirf Real Estate ke hawale se baat karein. Faltu topics par friendly andaz mein wapas property par le aayen.
-4. TONE: Professional, highly polite, aur 100% Roman Urdu. (e.g., "Assalam-o-Alaikum! Main {formatted_agency_name} se baat kar raha hoon...").
-5. INVENTORY RECOMMENDATION: Jab user details de de, toh strictly wahi recommend karein jo backend filter karke dega.
+    return f"""Identity: Aap {formatted_agency} ke smart, warm aur professional AI Real Estate Consultant hain.
 
+CORE CONVERSATIONAL GUIDELINES:
+1. GENDER-NEUTRAL RESPECT: Strictly NEVER use 'Sir', 'Madam', or 'Bhai'. Address the user respectfully using gender-neutral words like 'Janab', 'Mohtaram', or simply 'Aap'.
+2. NATURAL GREETING (MESSAGE #1): Agar user ne sirf Salam, greeting, ya agency ka naam liya hai, toh foran interrogation shuru mat karein (do NOT immediately ask 'buy karna hai ya rent' ya BHK). Pehle warm greeting dein aur poochein:
+   - Example: "Walaikum Assalam! Ji janab, {formatted_agency} mein khush-amdeed. Main aapki kya madad kar sakta hoon? 🏡✨"
+3. LET USER LEAD: Jab user khud bataye ke usay property chahiye ya kya talaash kar raha hai, tab natural andaz mein agle sawalat poochein.
+4. STRICT AGENCY LOYALTY: Aap sirf aur sirf '{formatted_agency}' ko represent karte hain. Aapka kaam sirf apni agency ki properties recommend karna hai.
+5. LANGUAGE: 100% Polite, warm, aur natural Roman Urdu.
 6. The "Zero-Silence" Rule: Always end your message with a gentle, relevant question to keep the conversation moving. Never leave a dead-end response.
 
 7. The Core State Machine (4-Step Qualification)
@@ -786,8 +783,7 @@ Your main objective is to collect these exactly 4 details before searching the d
 - Budget: (In Lakh/Crore)
 
 Strict Rules:
-- Until ALL 4 details are collected, politely ask ONLY for the missing details.
-- NEVER output an empty response. Always say something helpful.
+- Until ALL 4 details are collected, politely ask ONLY for the missing details (AFTER the user has stated intent).
 - When ALL 4 variables are collected, YOU MUST OUTPUT EXACTLY THIS JSON FORMAT ON A NEW LINE:
 [PROPERTY_SEARCH: {{"bhk":<int>,"budget":<int>,"location":"<str>","purpose":"buy"|"rent"}}]
 """
@@ -1269,21 +1265,30 @@ async def process_whatsapp_data(data: dict):
                                             ai_response = ""
 
                                         # --- FAILSAFE: IF LLM RETURNS BLANK ---
+                                        msg_lower = msg_body.strip().lower()
+                                        greeting_words = ["salam", "assalam", "hello", "hi", "hey", "al_razzaq", "madina", "noor"]
+                                        is_just_greeting = any(word in msg_lower for word in greeting_words) and len(msg_lower.split()) <= 6
+
                                         if not ai_response.strip():
                                             logger.warning("LLM returned empty string. Triggering Python State Machine Failsafe.")
                                             
-                                            # Determine the next missing piece of information dynamically
-                                            if not session.get("purpose"):
-                                                ai_response = "Assalam-o-Alaikum! Aap property kharidna chahte hain ya rent par lena chahte hain? 🏡"
-                                            elif not session.get("location"):
-                                                ai_response = "Aap kis shehar ya specific area (society) mein property dekhna chahte hain? 📍"
-                                            elif not session.get("bhk"):
-                                                ai_response = "Aapko kitne BHK ya rooms ki requirement hai? (Ya agar plot hai to size batayein) 🛏️"
-                                            elif not session.get("budget"):
-                                                ai_response = "Aapka approximate budget (Lakh ya Crore mein) kitna hai? 💰"
+                                            if is_just_greeting or not session.get("agency_tag_acknowledged"):
+                                                session["agency_tag_acknowledged"] = True
+                                                agency_name = str(session.get("agency_tag", "Real Estate")).replace("_", " ").title()
+                                                ai_response = f"Walaikum Assalam! Ji janab, {agency_name} mein khush-amdeed. Kahiye, main aaj aapki kya madad kar sakta hoon? 🏡✨"
                                             else:
-                                                # If all fields are somehow filled but LLM went blank, force the query trigger
-                                                ai_response = f'[PROPERTY_SEARCH: {{"purpose": "{session.get("purpose")}", "location": "{session.get("location")}", "bhk": {session.get("bhk")}, "budget": {session.get("budget")}}}]'
+                                                # Normal sequential qualification only after user has stated intent
+                                                if not session.get("purpose"):
+                                                    ai_response = "Janab, aap property kharidna chahte hain ya rent par lena chahte hain? 🏡"
+                                                elif not session.get("location"):
+                                                    ai_response = "Aap kis shehar ya specific society mein property dekhna chahte hain? 📍"
+                                                elif not session.get("bhk"):
+                                                    ai_response = "Aapko kitne BHK ya rooms ki zaroorat hai? 🛏️"
+                                                elif not session.get("budget"):
+                                                    ai_response = "Aapka approximate budget (Lakh ya Crore mein) kitna hai? 💰"
+                                                else:
+                                                    # If all fields are somehow filled but LLM went blank, force the query trigger
+                                                    ai_response = f'[PROPERTY_SEARCH: {{"purpose": "{session.get("purpose")}", "location": "{session.get("location")}", "bhk": {session.get("bhk")}, "budget": {session.get("budget")}}}]'
                                                 
                                         logger.info(f"🧠 [RAW LLM RESPONSE] {ai_response}")
                                         
