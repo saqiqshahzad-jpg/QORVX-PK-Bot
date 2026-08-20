@@ -541,7 +541,18 @@ def format_currency(amount: int) -> str:
 
 # ═══════════════════════════════════════════════════════════════
 # 🧠 SESSION STATE ENGINE (ANTI-AMNESIA CORE)
-# ═════════def extract_and_update_session(msg_body: str, phone: str, chat_history: list, tenant_id: str, tenant_config: dict) -> dict:
+# ═══════════════════════════════════════════════════════════════
+
+def get_session(phone: str, tenant_id: str) -> dict:
+    """Get or create a session for this user."""
+    key = f"{tenant_id}:{phone}"
+    if key not in USER_SESSIONS:
+        USER_SESSIONS[key] = {
+            "purpose": None, "bhk": None, "location": None, "budget": None, "agency_tag": None
+        }
+    return USER_SESSIONS[key]
+
+def extract_and_update_session(msg_body: str, phone: str, chat_history: list, tenant_id: str, tenant_config: dict) -> dict:
     """Updates global session with extracted variables."""
     session_id = f"{tenant_id}:{phone}"
     if session_id not in USER_SESSIONS:
