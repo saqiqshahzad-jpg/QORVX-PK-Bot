@@ -680,8 +680,12 @@ def session_has_all_params(session: dict) -> bool:
     return all([session.get("purpose"), session.get("bhk"), session.get("location"), session.get("budget")])
 
 def get_master_system_prompt(session: dict) -> str:
-    current_agency = session.get("agency_tag", "QORVX Concierge")
-    formatted_agency_name = current_agency.replace("_", " ").title()
+    # Safely get the agency_tag, fallback to generic string if None or empty
+    current_agency = session.get("agency_tag")
+    if not current_agency:
+        current_agency = "Our Real Estate Agency"
+        
+    formatted_agency_name = str(current_agency).replace("_", " ").title()
     return f"""Identity: Aap {formatted_agency_name} ke smart aur friendly AI Real Estate Consultant hain.
 
 CORE RULES & PERSONA:
