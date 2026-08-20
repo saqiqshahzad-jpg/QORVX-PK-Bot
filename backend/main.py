@@ -176,7 +176,7 @@ class GoogleSpreadsheetClient:
         self.gc = gspread.service_account_from_dict(creds_dict, scopes=self.scope)
 
     def get_booking_sheet(self):
-        return self.gc.open(self.booking_sheet_name).worksheet("Sheet2")
+        return self.gc.open(self.booking_sheet_name).sheet1
 
     def get_property_sheet(self):
         return self.gc.open(self.property_sheet_name).sheet1
@@ -203,10 +203,8 @@ def handle_calendar_booking(date_req: str, time_req: str, phone: str, tenant_id:
     try:
         workspace = GoogleSpreadsheetClient(tenant_id, booking_sheet_name, property_sheet_name)
         
-        try:
-            sheet = workspace.gc.open(booking_sheet_name).worksheet("Sheet2")
-        except gspread.exceptions.WorksheetNotFound:
-            sheet = workspace.gc.open(booking_sheet_name).add_worksheet(title="Sheet2", rows="1000", cols="6")
+        sheet = workspace.gc.open(booking_sheet_name).sheet1
+        if not sheet.get_all_values():
             sheet.append_row(["Date", "Time", "Client_Name", "Phone", "Email", "Status"])
 
         valid_slots = ["12:00 pm", "1:00 pm", "2:00 pm", "3:00 pm", "4:00 pm", "5:00 pm"]
