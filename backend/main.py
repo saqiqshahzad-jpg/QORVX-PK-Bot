@@ -448,20 +448,41 @@ def send_whatsapp_text(tenant_id: str, to_number: str, text_body: str, whatsapp_
         logger.error(f"🚨 [SEND TEXT CRASH] To: {to_number} | Error: {str(e)}")
 
 def send_whatsapp_media(tenant_id: str, to_number: str, media_url: str, media_type: str, whatsapp_token: str, caption: str = None):
+    """
+    Sends media to WhatsApp. If Meta rejects the media (e.g., file too large),
+    it gracefully falls back to sending the URL as a text message.
+    """
     url = f"https://graph.facebook.com/v25.0/{tenant_id}/messages"
     headers = {"Authorization": f"Bearer {whatsapp_token}", "Content-Type": "application/json"}
     media_payload = {"link": media_url}
     if caption:
         media_payload["caption"] = caption
     payload = {"messaging_product": "whatsapp", "recipient_type": "individual", "to": to_number, "type": media_type, media_type: media_payload}
-    try: 
+    
+    try:
         res = requests.post(url, headers=headers, json=payload, timeout=10)
         logger.info(f"🎬 [META MEDIA RESPONSE] Status: {res.status_code} | Body: {res.text}")
-        if res.status_code == 200:
-            return True
-        return False
-    except Exception as e: 
-        logger.info(f"🚨 [META MEDIA CRASH] {str(e)}")
+        
+        try:
+            response_data = res.json()
+        except Exception:
+            response_data = {}
+            
+        # Check if Meta API threw an error (HTTP 400+)
+        if res.status_code != 200 or "error" in response_data:
+            logger.error(f"Meta Media Upload Failed ({media_type}): {response_data.get('error', response_data)}")
+            
+            # --- SMART FALLBACK: Send as Text Link ---
+            cap_text = caption if caption else "Media File"
+            fallback_text = f"📎 *{cap_text}*\n\nJanab, yeh file size mein bari hone ki wajah se WhatsApp par direct load nahi ho saki. Barah-e-karam is link par click karke direct dekh lein:\n👉 {media_url}"
+            
+            logger.info("Executing Text Fallback for oversized media.")
+            send_whatsapp_text(tenant_id, to_number, fallback_text, whatsapp_token)
+            return False
+            
+        return True
+    except Exception as e:
+        logger.error(f"Exception in send_whatsapp_media: {e}")
         return False
 
 def send_whatsapp_buttons(tenant_id: str, to_number: str, body_text: str, buttons_list: list, whatsapp_token: str):
@@ -640,6 +661,34 @@ def format_currency(amount: int) -> str:
     if amount >= 100000: return f"{amount / 100000:g} Lacs"
     return f"{amount:,}"
 
+def format_pkr_currency(value):
+    """Safely formats raw numbers into PKR comma format with Lakh/Crore readable strings."""
+    if value is None or str(value).strip().upper() == "N/A":
+        return "N/A"
+    try:
+        # Clean string from any existing commas or spaces
+        clean_val = str(value).replace(',', '').replace(' ', '').strip()
+        num = float(clean_val)
+        if num.is_integer():
+            num = int(num)
+        
+        # Add standard comma formatting
+        formatted_num = f"{num:,}"
+        
+        # Generate local readable format (Lakh/Crore)
+        if num >= 10000000:
+            readable = f"{num / 10000000:g} Crore"
+        elif num >= 100000:
+            readable = f"{num / 100000:g} Lakh"
+        elif num >= 1000:
+            readable = f"{num / 1000:g} Thousand"
+        else:
+            readable = str(num)
+            
+        return f"{formatted_num} ({readable})"
+    except Exception:
+        return str(value) # Fallback to original string if not parseable
+
 # ═══════════════════════════════════════════════════════════════
 # 🧠 SESSION STATE ENGINE (ANTI-AMNESIA CORE)
 # ═══════════════════════════════════════════════════════════════
@@ -721,8 +770,10 @@ def extract_and_update_session(msg_body: str, phone: str, chat_history: list, te
         if digits:
             val = int(digits[0])
             if has_budget_context or val > 1000:
-                session["budget"] = normalize_budget(msg_body)
-                logger.info(f"Locked Budget: {session['budget']}")
+                extracted_budget = normalize_budget(msg_body)
+                if extracted_budget >= 1000:
+                    session["budget"] = extracted_budget
+                    logger.info(f"Locked Budget: {session['budget']}")
 
     return session
 
@@ -904,18 +955,41 @@ async def process_whatsapp_data(data: dict):
                                 if interactive.get("type") == "button_reply":
                                     button_id = interactive["button_reply"]["id"]
                                     button_title = interactive["button_reply"]["title"]
-                                    logger.info(f"Button Clicked: {button_id} ({button_title})")
+                                    logger.info(f"Interactive Button Clicked: {button_id} ({button_title})")
                                     
-                                    # Map button actions to session logic
                                     if button_id == "btn_cheaper":
-                                        # Lower the max budget filter and query again
-                                        session["budget"] = float(session.get("budget", 50000000)) * 0.8
+                                        # Reduce budget by 20% and clear active state
+                                        current_budget = float(session.get("budget", 10000000))
+                                        session["budget"] = current_budget * 0.8
+                                        session["state"] = None  # Exit inspecting state
+                                        session["active_property"] = None
+                                        
+                                        # Format new budget to show user
+                                        new_budget_str = format_pkr_currency(session["budget"])
+                                        reply_text = f"Ji Janab, main ne aapka budget thora kam set kar diya hai (Approx. PKR {new_budget_str}). Hum is naye budget mein options dhoondhte hain. Kya main search shuru karun? 🔍"
+                                        send_whatsapp_text(tenant_id, from_number, reply_text, whatsapp_token)
+                                        save_supabase_message(from_number, "user", f"Clicked Sasti Option", tenant_id)
+                                        save_supabase_message(from_number, "assistant", reply_text, tenant_id)
+                                        return PlainTextResponse(content="OK", status_code=200)
+
                                     elif button_id == "btn_next":
-                                        # Pivot to next available listing in inventory
-                                        pass
+                                        # Clear active state and ask for criteria adjustment
+                                        session["state"] = None
+                                        session["active_property"] = None
+                                        reply_text = "Koi masla nahi janab! 🔄 Aap mazeed options ke liye apni requirement (jaise location, rooms ya budget) mein kya tabdeeli karna chahenge?"
+                                        send_whatsapp_text(tenant_id, from_number, reply_text, whatsapp_token)
+                                        save_supabase_message(from_number, "user", f"Clicked Koi Aur Option", tenant_id)
+                                        save_supabase_message(from_number, "assistant", reply_text, tenant_id)
+                                        return PlainTextResponse(content="OK", status_code=200)
+
                                     elif button_id == "btn_visit":
-                                        # Trigger booking calendar flow
-                                        pass
+                                        # Transition to Lead Collection State
+                                        session["state"] = "BOOKING_VISIT"
+                                        reply_text = "Zabardast janab! 🤝 Is property ka visit schedule karne ke liye barah-e-karam apna *Poora Naam* aur *Email/Phone* likh kar reply karein, taake hamara agent aapse rabta kar sake."
+                                        send_whatsapp_text(tenant_id, from_number, reply_text, whatsapp_token)
+                                        save_supabase_message(from_number, "user", f"Clicked Visit Schedule", tenant_id)
+                                        save_supabase_message(from_number, "assistant", reply_text, tenant_id)
+                                        return PlainTextResponse(content="OK", status_code=200)
 
                                 # =========================================================================================
                                 # 🏠 STATE-MACHINE INTERCEPTORS: BUYER INTAKE FUNNEL
@@ -1175,6 +1249,19 @@ async def process_whatsapp_data(data: dict):
                                 else:
                                     detected = detect_market(msg_body, db_history)
                                     
+                                    # --- STATE 3: BOOKING VISIT (LEAD CAPTURE) ---
+                                    if session.get("state") == "BOOKING_VISIT":
+                                        logger.info(f"Captured Lead Info: {msg_body}")
+                                        
+                                        # Reset state after collecting info
+                                        session["state"] = "INSPECTING_PROPERTY" # Put them back in Q&A mode for the current property
+                                        
+                                        reply_text = "Bohat shukriya janab! ✅ Aapki details hamare paas mehfooz ho gayi hain. Hamara agent jald hi aap se is property ke visit ke hawale se rabta karega. 🏡✨\n\nKya aapko is property ke baare mein kuch aur janna hai?"
+                                        send_whatsapp_text(tenant_id, from_number, reply_text, whatsapp_token)
+                                        save_supabase_message(from_number, "user", msg_body, tenant_id)
+                                        save_supabase_message(from_number, "assistant", reply_text, tenant_id)
+                                        return PlainTextResponse(content="OK", status_code=200)
+
                                     # --- STATE 1: POST-SEARCH GROUNDED Q&A ---
                                     if session.get("state") == "INSPECTING_PROPERTY":
                                         active_prop = session.get("active_property", {})
@@ -1202,32 +1289,33 @@ async def process_whatsapp_data(data: dict):
 
                                             logger.info("Handling follow-up property question using active property context.")
                                             
-                                            # Format active property data cleanly for LLM
+                                            # Format active property data cleanly for LLM context (HIDDEN from user)
+                                            demand_raw = active_prop.get('Demand_PKR', 'N/A')
+                                            demand_formatted = format_pkr_currency(demand_raw)
+                                            
                                             prop_context = f"""
-Property Type: {active_prop.get('Property_Type')}
-Location: {active_prop.get('Society_Area')}, {active_prop.get('City')} ({active_prop.get('Phase_Block')})
-Price / Demand: PKR {active_prop.get('Demand_PKR')}
-Size: {active_prop.get('Size')}
-BHK / Rooms: {active_prop.get('BHK')}
-Description: {active_prop.get('Description', '')}
-Amenities: {active_prop.get('Amenities', '')}
-Possession: {active_prop.get('Possession', '')}
+Property Type: {active_prop.get('Property_Type', 'N/A')}
+Location: {active_prop.get('Society_Area', 'N/A')}, {active_prop.get('City', 'N/A')} ({active_prop.get('Phase_Block', '')})
+Price / Demand: PKR {demand_formatted}
+Size: {active_prop.get('Size', 'N/A')}
+BHK / Rooms: {active_prop.get('BHK', 'N/A')}
+Description: {active_prop.get('Description', 'N/A')}
+Amenities: {active_prop.get('Amenities', 'N/A')}
 """
                                             
-                                            QNA_PROMPT = f"""Identity: Aap {session.get('agency_tag', 'Real Estate Agency')} ke smart aur polite consultant hain.
+                                            QNA_PROMPT = f"""Identity: Aap {str(session.get('agency_tag', 'Real Estate Agency')).replace('_', ' ').title()} ke smart, friendly aur polite consultant hain.
 
-ACTIVE PROPERTY DETAILS:
+BACKGROUND CONTEXT (KNOWLEDGE BASE ONLY - DO NOT DUMP THIS TO THE USER):
 {prop_context}
 
-USER QUESTION: "{msg_body}"
+USER'S MESSAGE: "{msg_body}"
 
-STRICT INSTRUCTIONS:
-1. Ground your answer ONLY in the ACTIVE PROPERTY DETAILS above (Description, Amenities, Price, Size, Parking, etc.).
-2. If the user asks about parking (e.g., "Parking kitni gaariyon ki hai?"), extract it from Amenities/Description (e.g. "Janab, isme 1 car parking space / porch maujood hai 🚗").
-3. ZERO HALLUCINATIONS: If the requested information is not mentioned in the data, do NOT guess. Say:
-   "Janab, yeh specific detail confirm karne ke liye main agent se baat karwa deta hoon. Barah-e-karam apna Name aur Email share kardein taake hamara agent aapse direct rabta kare."
-4. GENDER-NEUTRAL: Use 'Janab' or 'Aap'. Strictly NEVER use 'Sir' or 'Bhai'.
-5. Do NOT output PROPERTY_SEARCH JSON or re-send images.
+STRICT RULES FOR YOUR RESPONSE:
+1. SMALL TALK / GREETINGS: Agar user ka message sirf "hello", "hi", "ji", "kia hua", ya koi casual filler hai, toh bilkul natural aur short jawab dein. DO NOT repeat the property details. (Example: "Ji janab, main yahan hoon. Boliye, is property ke hawale se aap kya janna chahte hain?"). 
+2. ANSWER DIRECTLY: Agar user property ka koi detail (price, rooms, parking, kitchen) pooche, toh sirf us akele sawal ka short aur direct jawab dein BACKGROUND CONTEXT se.
+3. ZERO HALLUCINATIONS: Agar koi baat BACKGROUND CONTEXT mein nahi hai, toh politely maazrat karein aur kahein: "Janab, is detail ke liye main agent se baat karwa deta hoon, barah-e-karam apna Name aur Email share kardein."
+4. GENDER-NEUTRAL: Always use 'Janab' or 'Aap'. NEVER use 'Sir' or 'Bhai'.
+5. TONE: 100% Conversational and natural Roman Urdu. Like a helpful human, not a robot.
 """
                                             # Call LLM for direct answer
                                             completion = robust_chat_completion([{"role": "system", "content": QNA_PROMPT}], 0.3, 200)
@@ -1275,7 +1363,8 @@ STRICT INSTRUCTIONS:
                                                 phase = str(get_val("Phase_Block", ""))
                                                 size = str(get_val("Size", ""))
                                                 bhk_val = get_val("BHK", "N/A")
-                                                demand_val = get_val("Demand_PKR", "N/A")
+                                                demand_raw = get_val("Demand_PKR", "N/A")
+                                                demand_formatted = format_pkr_currency(demand_raw)
                                                 img_url = get_val("Main_Image", "")
 
                                                 location_str = f"{society}, {city}" if society else city
@@ -1285,7 +1374,7 @@ STRICT INSTRUCTIONS:
                                                 prop_msg = f"📍 *{idx+1}. {ptype} - {location_str}*\n"
                                                 prop_msg += f"▫️ *Size:* {size}\n"
                                                 prop_msg += f"▫️ *BHK / Rooms:* {bhk_val}\n"
-                                                prop_msg += f"▫️ *Demand:* PKR {demand_val:,}\n" if isinstance(demand_val, (int, float)) else f"▫️ *Demand:* PKR {demand_val}\n"
+                                                prop_msg += f"▫️ *Demand:* PKR {demand_formatted}\n"
                                                 
                                                 full_ai_text += prop_msg
                                                 
@@ -1347,7 +1436,10 @@ Strict Instructions:
                                             ai_response = completion.choices[0].message.content
                                             
                                             if not ai_response or str(ai_response).strip() == "":
-                                                ai_response = f"Barah-e-karam apna {missing_param} confirm karein taake hum behtareen properties dikha sakein. 🏛️"
+                                                if not session.get("purpose") and not session.get("location") and not session.get("bhk") and not session.get("budget"):
+                                                    ai_response = f"Walaikum Assalam! {agency_name} mein khush-amdeed. Main aapki kya madad kar sakta hoon? 🏡✨"
+                                                else:
+                                                    ai_response = f"Barah-e-karam apna {missing_param} confirm karein taake hum behtareen properties dikha sakein. 🏛️"
 
                                     save_supabase_message(from_number, "user", msg_body, tenant_id)
                                     if ai_response and "I am scanning our off-market registries" not in ai_response and "processing your luxury portfolio request" not in ai_response:
