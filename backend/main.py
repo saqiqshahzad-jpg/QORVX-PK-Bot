@@ -1314,31 +1314,34 @@ STRICT INSTRUCTIONS:
                                             ai_response = f"Sir, filhal PKR {session['budget']} ke budget mein {session['location']} mein hamari inventory sold out hai. 🏢"
                                             
                                     else:
-                                        # Identify the missing parameter dynamically
+                                        # Identify the missing parameter dynamically in pure ROMAN URDU
                                         missing_param = None
                                         if not session.get("purpose"):
-                                            missing_param = "whether they want to Buy or Rent"
+                                            missing_param = "property kharidni hai ya rent par leni hai"
                                         elif not session.get("location"):
-                                            missing_param = "which City or Society they are looking in"
+                                            missing_param = "kis shehar ya specific society mein property dekhni hai"
                                         elif not session.get("bhk"):
-                                            missing_param = "how many BHK or Rooms they need"
+                                            missing_param = "kitne rooms ya BHK ki requirement hai"
                                         elif not session.get("budget"):
                                             purpose_str = session.get("purpose", "buy")
-                                            missing_param = f"their approximate {'monthly rent' if purpose_str == 'rent' else 'purchasing'} budget"
+                                            missing_param = f"{'monthly rent ka' if purpose_str == 'rent' else 'kharidne ka'} approximate budget kitna hai"
 
-                                        if missing_param:
-                                            logger.info(f"Missing parameter: {missing_param}. Routing to LLM for conversational extraction.")
+                                        # Only run this if we are NOT in the post-search property inspection phase
+                                        if missing_param and session.get("state") != "INSPECTING_PROPERTY":
+                                            logger.info(f"Missing parameter: {missing_param}. Routing to LLM.")
                                             
-                                            DYNAMIC_PROMPT = f"""Identity: Aap {str(session.get('agency_tag', 'Real Estate Agency')).replace('_', ' ').title()} ke smart aur polite consultant hain.
-
+                                            agency_name = str(session.get('agency_tag', 'Real Estate Agency')).replace('_', ' ').title()
+                                            
+                                            DYNAMIC_PROMPT = f"""Identity: Aap {agency_name} ke smart aur polite consultant hain.
+        
 User's Current Message: "{msg_body}"
 
 Strict Instructions:
-1. The user has NOT provided {missing_param} yet.
-2. If the user asked a clarifying question in their message, ANSWER it politely and directly first.
-3. Then, naturally and smoothly ask them to provide their {missing_param}.
+1. The user has NOT provided this information yet: "{missing_param}".
+2. GREETING RULE: If the user's message is just a greeting (like "salam", "hello"), reply with a warm welcome first (e.g., "Walaikum Assalam! {agency_name} mein khush-amdeed...").
+3. QUESTION RULE: Naturally and politely ask the user to provide the missing info. Example: "Janab, aapko {missing_param}?"
 4. GENDER-NEUTRAL: Use 'Janab' or 'Aap'. Strictly NEVER use 'Sir' or 'Bhai'.
-5. Tone: 100% Natural, polite Roman Urdu. No robotic repetition.
+5. LANGUAGE: 100% Natural, conversational Roman Urdu. Do NOT use literal English phrases.
 """
                                             completion = robust_chat_completion([{"role": "system", "content": DYNAMIC_PROMPT}], 0.3, 150)
                                             ai_response = completion.choices[0].message.content
