@@ -965,11 +965,6 @@ async def process_whatsapp_data(data: dict):
                                 return PlainTextResponse(content="OK", status_code=200)
 
                             if msg_body:
-                                if msg_body.lower() in ["hi", "hello", "hey", "salam", "aao", "aoa", "assalamualaikum", "slm", "salaam"]:
-                                    # Reset session for fresh conversation
-                                    _greet_session = get_session(from_number, tenant_id)
-                                    _greet_session.update({"bhk": None, "budget": None, "location": None, "purpose": None, "market": None, "language": None})
-                                    # Let it flow to the LLM for a natural text response instead of rigid buttons.
 
                                 db_history = get_supabase_history(from_number, tenant_id)
                                 last_ai_msg = db_history[-1]["content"] if db_history else ""
@@ -998,6 +993,35 @@ async def process_whatsapp_data(data: dict):
                                 # ── Update Core Session Context ──
                                 session = extract_and_update_session(msg_body, from_number, db_history, tenant_id, tenant_config)
                                 logger.info(f"🧠 [SESSION] {from_number}: bhk={session.get('bhk')} loc={session.get('location')} purpose={session.get('purpose')} budget={session.get('budget')} market={session.get('market')}")
+
+                                # --- NEW HARD RESET & GREETING BLOCK ---
+                                msg_lower = msg_body.lower()
+                                is_greeting = any(word in msg_lower for word in ["salam", "assalam", "hello", "hi", "hey"])
+                                is_new_inquiry = "properties dekhni hain" in msg_lower or "property dekhni hai" in msg_lower
+                                
+                                if is_greeting or is_new_inquiry:
+                                    logger.info("New conversation trigger detected. Performing Hard Session Reset.")
+                                    
+                                    # Clear all previous funnel filters and states
+                                    session["purpose"] = None
+                                    session["property_type"] = None
+                                    session["location"] = None
+                                    session["bhk"] = None
+                                    session["budget"] = None
+                                    session["state"] = None
+                                    session["active_property"] = None
+                                    session["greeting_done"] = True  # Mark greeting as done for this new loop
+                                    
+                                    # Generate Dynamic Agency Greeting
+                                    raw_agency_tag = session.get("agency_tag", "Hamari Agency")
+                                    agency_name = str(raw_agency_tag).replace("_", " ").title()
+                                    
+                                    greeting_text = f"Walaikum Assalam! {agency_name} mein khush-amdeed. ✨\n\nJanab, aap property kharidna chahte hain ya rent par lena chahte hain? 🏡"
+                                    
+                                    send_whatsapp_text(tenant_id, from_number, greeting_text, whatsapp_token)
+                                    save_supabase_message(from_number, "user", msg_body, tenant_id)
+                                    save_supabase_message(from_number, "assistant", greeting_text, tenant_id)
+                                    return PlainTextResponse(content="OK", status_code=200)
 
                                 # Check if user clicked an interactive quick reply button
                                 interactive = message.get("interactive", {})
@@ -1515,14 +1539,11 @@ STRICT RULES FOR YOUR RESPONSE:
                                         # If qualification is still incomplete and we are not in Q&A state, prompt the user
                                         if missing_param_prompt and session.get("state") != "INSPECTING_PROPERTY":
                                             logger.info(f"Funnel Incomplete. Dispatching sequential prompt.")
-                                            
-                                            # If this is the very first message and contains a greeting
-                                            if not session.get("greeting_done") and any(g in msg_body.lower() for g in ["salam", "hello", "hi", "hey"]):
-                                                session["greeting_done"] = True
-                                                agency_name = str(session.get("agency_tag", "Real Estate")).replace("_", " ").title()
-                                                ai_response = f"Walaikum Assalam! {agency_name} mein khush-amdeed. ✨\n\n{missing_param_prompt}"
-                                            else:
-                                                ai_response = missing_param_prompt
+                                            # Just send the prompt directly, because the initial greeting is handled above
+                                            send_whatsapp_text(tenant_id, from_number, missing_param_prompt, whatsapp_token)
+                                            save_supabase_message(from_number, "user", msg_body, tenant_id)
+                                            save_supabase_message(from_number, "assistant", missing_param_prompt, tenant_id)
+                                            return PlainTextResponse(content="OK", status_code=200)
 
                                     save_supabase_message(from_number, "user", msg_body, tenant_id)
                                     if ai_response and "I am scanning our off-market registries" not in ai_response and "processing your luxury portfolio request" not in ai_response:
