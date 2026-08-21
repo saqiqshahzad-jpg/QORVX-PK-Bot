@@ -382,6 +382,8 @@ def send_property_media_sequence(to_number: str, prop: dict, tenant_id: str, acc
 
     # 4. Dispatch Video if exists
     if video_url and video_url.startswith("http") and video_url != "N/A":
+        if "dropbox.com" in video_url:
+            video_url = video_url.replace("dl=0", "raw=1").replace("dl=1", "raw=1")
         send_whatsapp_media(tenant_id, to_number, video_url, "video", access_token, caption="🎥 Property Walkthrough Video")
 
 def send_whatsapp_quick_reply_buttons(to_number: str, body_text: str, tenant_id: str, access_token: str):
@@ -1312,178 +1314,37 @@ STRICT INSTRUCTIONS:
                                             ai_response = f"Sir, filhal PKR {session['budget']} ke budget mein {session['location']} mein hamari inventory sold out hai. 🏢"
                                             
                                     else:
-                                        active_prompt = get_master_system_prompt(session)
-                                        active_prompt = build_state_aware_prompt(session, active_prompt)
-                                        
-                                        messages_array = [{"role": "system", "content": active_prompt}]
-                                        
-                                        # Pass last 8 messages (expanded from 3 to prevent amnesia)
-                                        for past_msg in db_history[-8:]: 
-                                            content = past_msg["content"]
-                                            
-                                            if "I am scanning our off-market" in content or "explore alternative tiers" in content or "processing your luxury" in content:
-                                                continue
-                                            # Only skip pure PROPERTY_SEARCH commands from assistant
-                                            if past_msg["role"] == "assistant" and "PROPERTY_SEARCH" in content:
-                                                continue
-                                                
-                                            messages_array.append(past_msg)
-                                        
-                                        lang_hint = "Respond ENTIRELY in Roman Urdu. ONLY ask for the MISSING info listed in session state above."
-                                        # Fix: LLaMA strictly requires system prompts at the beginning or as user instructions. 
-                                        # Let's append this as part of the user's latest instruction instead of a new system message to avoid failing.
-                                        messages_array.append({"role": "user", "content": f"{msg_body}\n\n[SYSTEM INSTRUCTION: {lang_hint}]"})
-                                        
-                                        completion = robust_chat_completion(messages_array, 0.4, 150)
-                                        ai_response = completion.choices[0].message.content
-                                        if ai_response is None:
-                                            ai_response = ""
+                                        # Identify the missing parameter dynamically
+                                        missing_param = None
+                                        if not session.get("purpose"):
+                                            missing_param = "whether they want to Buy or Rent"
+                                        elif not session.get("location"):
+                                            missing_param = "which City or Society they are looking in"
+                                        elif not session.get("bhk"):
+                                            missing_param = "how many BHK or Rooms they need"
+                                        elif not session.get("budget"):
+                                            purpose_str = session.get("purpose", "buy")
+                                            missing_param = f"their approximate {'monthly rent' if purpose_str == 'rent' else 'purchasing'} budget"
 
-                                        # --- FAILSAFE: IF LLM RETURNS BLANK ---
-                                        msg_lower = msg_body.strip().lower()
-                                        greeting_words = ["salam", "assalam", "hello", "hi", "hey", "al_razzaq", "madina", "noor"]
-                                        is_just_greeting = any(word in msg_lower for word in greeting_words) and len(msg_lower.split()) <= 6
+                                        if missing_param:
+                                            logger.info(f"Missing parameter: {missing_param}. Routing to LLM for conversational extraction.")
+                                            
+                                            DYNAMIC_PROMPT = f"""Identity: Aap {str(session.get('agency_tag', 'Real Estate Agency')).replace('_', ' ').title()} ke smart aur polite consultant hain.
 
-                                        if not ai_response.strip():
-                                            logger.warning("LLM returned empty string. Triggering Python State Machine Failsafe.")
-                                            
-                                            # Check if greeting was already acknowledged in session
-                                            if not session.get("greeting_done"):
-                                                session["greeting_done"] = True
-                                                agency_name = str(session.get("agency_tag", "Real Estate")).replace("_", " ").title()
-                                                ai_response = f"Walaikum Assalam! Ji janab, {agency_name} mein khush-amdeed. Kahiye, main aaj aapki kya madad kar sakta hoon? 🏡✨"
-                                            else:
-                                                # Ask only the missing parameter sequentially
-                                                if not session.get("purpose"):
-                                                    ai_response = "Janab, aap property kharidna chahte hain ya rent par lena chahte hain? 🏡"
-                                                elif not session.get("location"):
-                                                    ai_response = "Aap kis shehar ya specific society mein property dekhna chahte hain? 📍"
-                                                elif not session.get("bhk"):
-                                                    ai_response = "Aapko kitne BHK ya rooms ki requirement hai? 🛏️"
-                                                elif not session.get("budget"):
-                                                    ai_response = "Aapka approximate budget kitna hai? 💰"
-                                                else:
-                                                    # If all fields are somehow filled but LLM went blank, force the query trigger
-                                                    ai_response = f'[PROPERTY_SEARCH: {{"purpose": "{session.get("purpose")}", "location": "{session.get("location")}", "bhk": {session.get("bhk")}, "budget": {session.get("budget")}}}]'
-                                                
-                                        logger.info(f"🧠 [RAW LLM RESPONSE] {ai_response}")
-                                        
-                                        # --- FIXED ACCUMULATIVE SESSION STATE ---
-                                        # Har step par sirf nayi aane wali values update hongi, purani delete nahi hongi
-                                        if "PROPERTY_SEARCH" in ai_response:
-                                            try:
-                                                start_idx = ai_response.find("{")
-                                                end_idx = ai_response.rfind("}") + 1
-                                                if start_idx != -1 and end_idx != -1:
-                                                    json_str = ai_response[start_idx:end_idx]
-                                                    search_params = json.loads(json_str)
-                                        
-                                                    # Sirf tab update karein agar value exist karti ho (None se overwrite na ho)
-                                                    p = search_params.get("purpose") or search_params.get("Listing_Type")
-                                                    if p:
-                                                        session["purpose"] = str(p).strip().lower()
-                                        
-                                                    b = search_params.get("bhk") or search_params.get("BHK")
-                                                    if b:
-                                                        session["bhk"] = int(b)
-                                        
-                                                    l = search_params.get("location") or search_params.get("City") or search_params.get("Society_Area")
-                                                    if l:
-                                                        session["location"] = str(l).strip()
-                                        
-                                                    bg = search_params.get("budget") or search_params.get("Demand_PKR")
-                                                    if bg:
-                                                        session["budget"] = normalize_budget(str(bg))
-                                            except Exception as e:
-                                                logger.error(f"JSON Parse error: {e}")
-                                                
-                                        # Session state persist hone ke baad check karein
-                                        logger.info(f"Updated Session: {session}")
-                                        
-                                        # --- STRICT SEARCH TRIGGER LOGIC ---
-                                        properties_list = None
-                                        
-                                        # Trigger 1: If LLM explicitly decides all info is gathered and outputs the JSON
-                                        if "PROPERTY_SEARCH" in ai_response:
-                                            logger.info(f"Automatic Database Search Triggered by LLM: {ai_response}")
-                                            # Apply fallback ONLY if LLM triggered it but missed the budget
-                                            if not session.get("budget"): 
-                                                session["budget"] = 999999999
-                                                
-                                            l_type = session.get("purpose", "buy")
-                                            properties_list = query_property_database(
-                                                listing_type=l_type,
-                                                bhk=int(session.get("bhk", 0)),
-                                                city_society=session.get("location", ""),
-                                                budget=normalize_budget(str(session.get("budget", 0))),
-                                                tenant_id=tenant_id,
-                                                booking_sheet_name=booking_sheet_name,
-                                                property_sheet_name=property_sheet_name,
-                                                agency_tag=session.get("agency_tag")
-                                            )
-                                            
-                                        else:
-                                            # Do NOT trigger search. Let the LLM send the next question to the user.
-                                            logger.info("State machine incomplete. Waiting for user to provide remaining parameters (e.g., budget).")
-                                            pass
-                                            
-                                        if properties_list:
-                                            target_properties = properties_list[:3]
-                                            actual_count = len(target_properties)
-                                            
-                                            if l_type.lower() == "rent":
-                                                scan_msg = f"Jee hamare paas {actual_count} premium rental portfolio(s) available hain, abhi dispatch ho rahe hain... 🏛️✨"
-                                            else:
-                                                scan_msg = f"Hamare premium registries scan ho rahi hain. {actual_count} exclusive portfolio(s) abhi dispatch ho rahe hain... 🏛️✨"
-                                            send_whatsapp_text(tenant_id, from_number, scan_msg, whatsapp_token)
-                                            time.sleep(1)
-                                            
-                                            for idx, prop in enumerate(target_properties, start=1):
-                                                media_cols = ['Main_Image', 'Image_2', 'Image_3', 'Image_4', 'Image_5']
-                                                for col in media_cols:
-                                                    img_url = str(prop.get(col, '')).strip()
-                                                    if img_url and img_url.lower() != 'nan' and img_url.startswith('http'):
-                                                        send_whatsapp_media(tenant_id, from_number, img_url, "image", whatsapp_token)
-                                                
-                                                prop_id = prop.get("Property_ID", f"PROP-PK-{idx}")
-                                                budget_fmt = format_currency(int(prop.get('Demand_PKR', 0)))
-                                                title = f"{prop.get('Size', '')} {prop.get('Property_Type', '')} in {prop.get('Society_Area', '')}"
-                                                location = f"{prop.get('Phase_Block', '')}, {prop.get('City', '')}"
-                                                
-                                                if l_type.lower() == "rent":
-                                                    property_text = f"🏛️ *RENTAL MATCH*\n\n📌 *Asset:* {title}\n💵 *Rent:* PKR {budget_fmt}/month\n📍 *Location:* {location}"
-                                                else:
-                                                    property_text = f"🏛️ *EXCLUSIVE ASSET MATCH*\n\n📌 *Asset:* {title}\n💵 *Demand:* PKR {budget_fmt}\n📍 *Location:* {location}"
-                                                
-                                                send_property_button(tenant_id, from_number, property_text, prop_id, whatsapp_token)
-                                                
-                                                video_url = str(prop.get('Video', '')).strip()
-                                                if video_url and video_url.lower() != 'nan' and video_url.startswith('http'):
-                                                    video_text = f"🎥 *Exclusive Walkthrough Tour*\n{video_url}"
-                                                    send_whatsapp_text(tenant_id, from_number, video_text, whatsapp_token)
+User's Current Message: "{msg_body}"
 
-                                            ai_response = "Is property ki private site visit schedule karne ke liye barah-e-karam apna Poora Naam aur Email share karein taake humari team raabta kare. ✨"
+Strict Instructions:
+1. The user has NOT provided {missing_param} yet.
+2. If the user asked a clarifying question in their message, ANSWER it politely and directly first.
+3. Then, naturally and smoothly ask them to provide their {missing_param}.
+4. GENDER-NEUTRAL: Use 'Janab' or 'Aap'. Strictly NEVER use 'Sir' or 'Bhai'.
+5. Tone: 100% Natural, polite Roman Urdu. No robotic repetition.
+"""
+                                            completion = robust_chat_completion([{"role": "system", "content": DYNAMIC_PROMPT}], 0.3, 150)
+                                            ai_response = completion.choices[0].message.content
                                             
-                                            # Save active context
-                                            session["active_property"] = target_properties[0]
-                                            session["state"] = "INSPECTING_PROPERTY"
-                                            
-                                            save_supabase_message(from_number, "user", msg_body, tenant_id)
-                                            save_supabase_message(from_number, "assistant", ai_response, tenant_id)
-                                            send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
-                                            return PlainTextResponse(content="OK", status_code=200)
-
-                                        elif properties_list is not None:
-                                            ai_response = "Sir, filhal is exact specific block mein hamari inventory sold out hai. Lekin is budget mein mere paas DHA Phase 8 ya Bahria Town mein behtareen options hain. Kya main unki details bhejun? 🏛️"
-
-                                    # 🔥 ULTIMATE SANITIZER (NO GHOSTING)
-                                    # Agar LLM ne completely invalid text (like raw dict) daala jo parse nahi hua, 
-                                    # ya kisi aur wajah se yahan tak phuncha, just ask them a natural question.
-                                    if ai_response and ("PROPERTY_SEARCH" in ai_response or '{"' in ai_response):
-                                        ai_response = "Bhai thori confusion hui hai. Kya aap confirm kar sakte hain ke aapko Rent par chahiye ya Buy karna hai, aur aapka budget kya hai? 🏛️"
-                                            
-                                    if not ai_response or str(ai_response).strip() == "":
-                                        ai_response = "Bhai thori confusion hui hai. Kya aap confirm kar sakte hain aapko kya chahiye? 🏛️"
+                                            if not ai_response or str(ai_response).strip() == "":
+                                                ai_response = f"Barah-e-karam apna {missing_param} confirm karein taake hum behtareen properties dikha sakein. 🏛️"
 
                                     save_supabase_message(from_number, "user", msg_body, tenant_id)
                                     if ai_response and "I am scanning our off-market registries" not in ai_response and "processing your luxury portfolio request" not in ai_response:
