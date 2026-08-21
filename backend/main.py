@@ -384,10 +384,9 @@ def send_property_media_sequence(to_number: str, prop: dict, tenant_id: str, acc
             video_url += "?raw=1" if "?" not in video_url else "&raw=1"
         logger.info(f"Dispatching direct video stream: {video_url}")
 
-    # 3. Dispatch Images
+    # 3. Dispatch Images (NO CAPTIONS)
     for idx, img_url in enumerate(image_urls):
-        caption = f"Photo {idx+1}/{len(image_urls)}" if idx > 0 else f"📸 Main View: {prop.get('Society_Area', '')}"
-        send_whatsapp_media(tenant_id, to_number, img_url, "image", access_token, caption=caption)
+        send_whatsapp_media(tenant_id, to_number, img_url, "image", access_token, caption="")
         time.sleep(0.5) # Prevent Meta rate-limit drops
 
     # 4. Dispatch Video
@@ -468,15 +467,23 @@ def send_whatsapp_text(tenant_id: str, to_number: str, text_body: str, whatsapp_
 
 def send_whatsapp_media(tenant_id: str, to_number: str, media_url: str, media_type: str, whatsapp_token: str, caption: str = None):
     """
-    Sends media to WhatsApp. If Meta rejects the media (e.g., file too large),
-    it gracefully falls back to sending the URL as a text message.
+    Sends media to WhatsApp. If a video exceeds the 16MB limit, it automatically retries sending it as a 100MB-limit Document.
     """
     url = f"https://graph.facebook.com/v25.0/{tenant_id}/messages"
     headers = {"Authorization": f"Bearer {whatsapp_token}", "Content-Type": "application/json"}
+    
+    # Do not pass empty captions to Meta to avoid payload formatting errors
     media_payload = {"link": media_url}
-    if caption:
+    if caption and caption.strip():
         media_payload["caption"] = caption
-    payload = {"messaging_product": "whatsapp", "recipient_type": "individual", "to": to_number, "type": media_type, media_type: media_payload}
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": to_number,
+        "type": media_type,
+        media_type: media_payload
+    }
     
     try:
         res = requests.post(url, headers=headers, json=payload, timeout=10)
@@ -487,15 +494,38 @@ def send_whatsapp_media(tenant_id: str, to_number: str, media_url: str, media_ty
         except Exception:
             response_data = {}
             
-        # Check if Meta API threw an error (HTTP 400+)
         if res.status_code != 200 or "error" in response_data:
-            logger.error(f"Meta Media Upload Failed ({media_type}): {response_data.get('error', response_data)}")
+            error_msg = str(response_data.get("error", response_data))
+            logger.error(f"Meta Media Upload Failed ({media_type}): {error_msg}")
             
-            # --- SMART FALLBACK: Send as Text Link ---
-            cap_text = caption if caption else "Media File"
-            fallback_text = f"📎 *{cap_text}*\n\nJanab, yeh file size mein bari hone ki wajah se WhatsApp par direct load nahi ho saki. Barah-e-karam is link par click karke direct dekh lein:\n👉 {media_url}"
+            # --- SMART HACK: Try Video as Document (100MB Limit) ---
+            if media_type == "video" and "exceeds maximum allowed size" in error_msg:
+                logger.info("Video exceeds 16MB. Retrying as a Document payload...")
+                doc_obj = {"link": media_url, "filename": "Property_Walkthrough.mp4"}
+                if caption and caption.strip():
+                    doc_obj["caption"] = caption
+                    
+                doc_payload = {
+                    "messaging_product": "whatsapp",
+                    "recipient_type": "individual",
+                    "to": to_number,
+                    "type": "document",
+                    "document": doc_obj
+                }
+                doc_resp = requests.post(url, headers=headers, json=doc_payload)
+                if doc_resp.status_code == 200 and "error" not in doc_resp.json():
+                    logger.info("Document hack successful! Video sent as file.")
+                    return True
+                else:
+                    logger.error(f"Document fallback also failed: {doc_resp.json()}")
             
-            logger.info("Executing Text Fallback for oversized media.")
+            # --- FINAL FALLBACK: Send as Text Link ---
+            logger.info("Executing Text Link Fallback.")
+            if caption:
+                fallback_text = f"📎 *{caption}*\n\nJanab, yeh file bari hone ki wajah se direct load nahi hui, is link par click karke dekh lein:\n👉 {media_url}"
+            else:
+                fallback_text = f"📎 Janab, yeh media file bari hone ki wajah se load nahi hui, is link par dekh lein:\n👉 {media_url}"
+                
             send_whatsapp_text(tenant_id, to_number, fallback_text, whatsapp_token)
             return False
             
