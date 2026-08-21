@@ -376,8 +376,13 @@ def send_property_media_sequence(to_number: str, prop: dict, tenant_id: str, acc
 
     # 2. Collect Video URL
     video_url = str(prop.get("video") or prop.get("Video") or "").strip()
-    if "dropbox.com" in video_url:
-        video_url = video_url.replace("dl=0", "raw=1").replace("dl=1", "raw=1")
+    if video_url and video_url != "N/A" and video_url.startswith("http"):
+        if "dropbox.com" in video_url:
+            import re
+            # Replace dl=0 with raw=1 for direct streaming
+            video_url = re.sub(r'[?&]dl=[01]', '', video_url)
+            video_url += "?raw=1" if "?" not in video_url else "&raw=1"
+        logger.info(f"Dispatching direct video stream: {video_url}")
 
     # 3. Dispatch Images
     for idx, img_url in enumerate(image_urls):
@@ -386,7 +391,7 @@ def send_property_media_sequence(to_number: str, prop: dict, tenant_id: str, acc
         time.sleep(0.5) # Prevent Meta rate-limit drops
 
     # 4. Dispatch Video
-    if video_url.startswith("http") and video_url != "N/A":
+    if video_url and video_url != "N/A" and video_url.startswith("http"):
         send_whatsapp_media(tenant_id, to_number, video_url, "video", access_token, caption="🎥 Property Walkthrough Video")
 
 def send_whatsapp_quick_reply_buttons(to_number: str, body_text: str, tenant_id: str, access_token: str):
@@ -958,6 +963,26 @@ async def process_whatsapp_data(data: dict):
 
                                 db_history = get_supabase_history(from_number, tenant_id)
                                 last_ai_msg = db_history[-1]["content"] if db_history else ""
+                                
+                                # --- INTENT SHIFT & SEARCH RESET DETECTOR ---
+                                msg_lower = msg_body.lower()
+                                property_type_keywords = ["plot", "house", "makan", "flat", "apartment", "bangla"]
+                                action_keywords = ["kharidna", "buy", "rent", "bechna", "chaihe", "chahiye"]
+                                
+                                _sess_check = get_session(from_number, tenant_id)
+                                if any(pt in msg_lower for pt in property_type_keywords) and any(ak in msg_lower for ak in action_keywords):
+                                    logger.info("New search intent detected. Clearing previous session parameters.")
+                                    _sess_check["state"] = None
+                                    _sess_check["active_property"] = None
+                                    _sess_check["bhk"] = None
+                                    _sess_check["budget"] = None
+                                    _sess_check["purpose"] = "buy" if any(b in msg_lower for b in ["buy", "kharidna", "plot"]) else "rent"
+                                    
+                                    # Extract property type
+                                    for pt in ["plot", "house", "flat", "apartment"]:
+                                        if pt in msg_lower:
+                                            _sess_check["property_type"] = pt
+                                            break
 
                                 # ═══ SESSION STATE: Extract & persist parameters ═══
                                 # ── Update Core Session Context ──
@@ -1265,8 +1290,6 @@ async def process_whatsapp_data(data: dict):
                                     
                                     # --- STATE 3: BOOKING VISIT (LEAD CAPTURE) ---
                                     if session.get("state") == "BOOKING_VISIT":
-                                        logger.info(f"Processing Lead Info: {msg_body}")
-                                        
                                         import re
                                         from datetime import datetime
                                         
@@ -1274,27 +1297,28 @@ async def process_whatsapp_data(data: dict):
                                         email_match = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', msg_body)
                                         email = email_match.group(0) if email_match else "N/A"
                                         
-                                        # 2. Extract Name cleanly
-                                        name = msg_body.replace(email, "").replace(",", "").strip() if email != "N/A" else msg_body.replace(",", "").strip()
+                                        # 2. Extract Name cleanly (strip email and punctuation)
+                                        name = msg_body.replace(email, "").replace(",", "").replace("/", "").strip()
                                         if not name:
                                             name = "Client"
                                             
-                                        # 3. Extract Context Data
+                                        # 3. Context Data
                                         active_prop = session.get("active_property", {})
                                         property_id = active_prop.get("Property_ID", active_prop.get("property_id", "Prop_Unknown"))
                                         phone_number = str(from_number)
                                         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                                         
-                                        # 4. Save EXACT matching columns: [Property_ID, Name, Email, Phone_Number, Date_Time]
+                                        # 4. Strict Column Order: [Col A: Property_ID, Col B: Name, Col C: Email, Col D: Phone_Number, Col E: Date_Time]
+                                        lead_row = [str(property_id), str(name), str(email), str(phone_number), str(current_time)]
+                                        
                                         try:
                                             workspace = GoogleSpreadsheetClient(tenant_id, booking_sheet_name, property_sheet_name)
                                             sheet = workspace.gc.open(property_sheet_name).worksheet("Leads")
-                                            sheet.append_row([property_id, name, email, phone_number, current_time])
-                                            logger.info(f"Lead saved successfully: {property_id} | {name} | {email} | {phone_number}")
+                                            sheet.append_row(lead_row)
+                                            logger.info(f"Lead Row Appended: {lead_row}")
                                         except Exception as e:
                                             logger.error(f"Failed to append row to Leads sheet: {e}")
-                                        
-                                        # Reset state after collecting info
+                                            
                                         session["state"] = "INSPECTING_PROPERTY"
                                         
                                         reply_text = "Bohat shukriya janab! ✅ Aapki details hamare paas mehfooz ho gayi hain aur agent ko forward kar di gayi hain. Hamara numainda jald hi aap se rabta karega. 🏡✨\n\nKya aapko is property ke baare mein kuch aur janna hai?"
@@ -1441,7 +1465,8 @@ STRICT RULES FOR YOUR RESPONSE:
                                             save_supabase_message(from_number, "assistant", ai_response, tenant_id)
                                             return PlainTextResponse(content="OK", status_code=200)
                                         else:
-                                            ai_response = f"Sir, filhal PKR {session['budget']} ke budget mein {session['location']} mein hamari inventory sold out hai. 🏢"
+                                            formatted_budget = format_pkr_currency(session.get('budget', ''))
+                                            ai_response = f"Janab, filhal PKR {formatted_budget} ke budget mein {session.get('location', '')} mein hamari inventory sold out hai. 🏢"
                                             
                                     else:
                                         # Identify the missing parameter dynamically in pure ROMAN URDU
