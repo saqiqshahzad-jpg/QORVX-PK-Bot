@@ -343,11 +343,13 @@ def query_property_database(listing_type: str, bhk: int, city_society: str, budg
             if budget_col:
                 try:
                     max_budget = float(budget)
-                    df_demand = pd.to_numeric(df[budget_col], errors='coerce')
-                    df = df[(df_demand <= max_budget) | (df_demand.isna())]
+                    # If budget was mistakenly set to <= 100 (e.g. 1 or 2 PKR), ignore the filter to prevent false sold-outs
+                    if max_budget > 100 and max_budget < 900000000:
+                        df_demand = pd.to_numeric(df[budget_col], errors='coerce')
+                        df = df[(df_demand <= max_budget) | (df_demand.isna())]
                     logger.info(f"After Budget Filter: {len(df)} properties left.")
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"Bypassing budget filter: {e}")
 
         logger.info(f"Final filtered properties ready to send: {len(df)}")
 
@@ -688,17 +690,11 @@ def extract_and_update_session(msg_body: str, phone: str, chat_history: list, te
                 break
 
     # ── BHK detection ──
-    bhk_match = re.search(r'(\d+)\s*(?:bhk|bed|bedroom|kamr[ae]|kamare)', msg_lower)
-    if bhk_match:
+    bhk_match = re.search(r'\b([1-9]|10)\s*(?:bhk|bed|bedroom|bad room|room)?\b', msg_lower)
+    if bhk_match and not session.get("bhk"):
+        # If message is just a number like "1" or "2", it's BHK
         session["bhk"] = int(bhk_match.group(1))
-    elif msg_lower.strip().isdigit():
-        val = int(msg_lower.strip())
-        if 1 <= val <= 10 and not session.get("bhk"):
-            # Context: last AI asked for BHK, or session still missing BHK
-            if any(kw in last_ai_content for kw in ["bhk", "bed", "kamr", "bedroom", "kamare"]):
-                session["bhk"] = val
-            elif not session.get("bhk"):
-                session["bhk"] = val
+        logger.info(f"Locked BHK: {session['bhk']}")
 
     # ── LOCATION detection ──
     if not session.get("location"):
@@ -714,12 +710,17 @@ def extract_and_update_session(msg_body: str, phone: str, chat_history: list, te
 
     # ── BUDGET detection ──
     if not session.get("budget"):
-        budget_val = normalize_budget(msg_body)
-        if budget_val > 10:
-            session["budget"] = budget_val
-        elif budget_val > 0 and session.get("bhk"):
-            if any(kw in last_ai_content for kw in ["budget", "price", "kitna", "paisay", "cost", "amount"]):
-                session["budget"] = budget_val
+        # Budget Extraction (Requires Lakh, Crore, Thousand, K, or numbers >= 1000)
+        budget_keywords = ["lakh", "lac", "crore", "cr", "hazar", "k", "budget", "pkr", "rs"]
+        has_budget_context = any(k in msg_lower for k in budget_keywords)
+        
+        # Extract large numeric values
+        digits = re.findall(r'\b\d+\b', msg_lower)
+        if digits:
+            val = int(digits[0])
+            if has_budget_context or val > 1000:
+                session["budget"] = normalize_budget(msg_body)
+                logger.info(f"Locked Budget: {session['budget']}")
 
     return session
 
@@ -1346,20 +1347,21 @@ STRICT INSTRUCTIONS:
                                         if not ai_response.strip():
                                             logger.warning("LLM returned empty string. Triggering Python State Machine Failsafe.")
                                             
-                                            if is_just_greeting or not session.get("agency_tag_acknowledged"):
-                                                session["agency_tag_acknowledged"] = True
+                                            # Check if greeting was already acknowledged in session
+                                            if not session.get("greeting_done"):
+                                                session["greeting_done"] = True
                                                 agency_name = str(session.get("agency_tag", "Real Estate")).replace("_", " ").title()
                                                 ai_response = f"Walaikum Assalam! Ji janab, {agency_name} mein khush-amdeed. Kahiye, main aaj aapki kya madad kar sakta hoon? 🏡✨"
                                             else:
-                                                # Normal sequential qualification only after user has stated intent
+                                                # Ask only the missing parameter sequentially
                                                 if not session.get("purpose"):
                                                     ai_response = "Janab, aap property kharidna chahte hain ya rent par lena chahte hain? 🏡"
                                                 elif not session.get("location"):
                                                     ai_response = "Aap kis shehar ya specific society mein property dekhna chahte hain? 📍"
                                                 elif not session.get("bhk"):
-                                                    ai_response = "Aapko kitne BHK ya rooms ki zaroorat hai? 🛏️"
+                                                    ai_response = "Aapko kitne BHK ya rooms ki requirement hai? 🛏️"
                                                 elif not session.get("budget"):
-                                                    ai_response = "Aapka approximate budget (Lakh ya Crore mein) kitna hai? 💰"
+                                                    ai_response = "Aapka approximate budget kitna hai? 💰"
                                                 else:
                                                     # If all fields are somehow filled but LLM went blank, force the query trigger
                                                     ai_response = f'[PROPERTY_SEARCH: {{"purpose": "{session.get("purpose")}", "location": "{session.get("location")}", "bhk": {session.get("bhk")}, "budget": {session.get("budget")}}}]'
