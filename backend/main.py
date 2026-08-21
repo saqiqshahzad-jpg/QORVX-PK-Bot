@@ -985,7 +985,7 @@ async def process_whatsapp_data(data: dict):
                                     elif button_id == "btn_visit":
                                         # Transition to Lead Collection State
                                         session["state"] = "BOOKING_VISIT"
-                                        reply_text = "Zabardast janab! 🤝 Is property ka visit schedule karne ke liye barah-e-karam apna *Poora Naam* aur *Email/Phone* likh kar reply karein, taake hamara agent aapse rabta kar sake."
+                                        reply_text = "Zabardast janab! 🤝 Visit schedule karne ke liye barah-e-karam apna *Poora Naam* aur *Email* likh kar reply karein. (Aapka WhatsApp number hum automatically save kar lenge)."
                                         send_whatsapp_text(tenant_id, from_number, reply_text, whatsapp_token)
                                         save_supabase_message(from_number, "user", f"Clicked Visit Schedule", tenant_id)
                                         save_supabase_message(from_number, "assistant", reply_text, tenant_id)
@@ -1251,12 +1251,36 @@ async def process_whatsapp_data(data: dict):
                                     
                                     # --- STATE 3: BOOKING VISIT (LEAD CAPTURE) ---
                                     if session.get("state") == "BOOKING_VISIT":
-                                        logger.info(f"Captured Lead Info: {msg_body}")
+                                        logger.info(f"Processing Lead Info: {msg_body}")
+                                        
+                                        import re
+                                        
+                                        # 1. Extract Email using Regex
+                                        email_match = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', msg_body)
+                                        email = email_match.group(0) if email_match else "N/A"
+                                        
+                                        # 2. Extract Name (Remove email from the string)
+                                        name = msg_body.replace(email, "").strip() if email != "N/A" else msg_body.strip()
+                                        if not name:
+                                            name = "Unknown"
+                                            
+                                        # 3. Extract Property ID and Phone Number
+                                        active_prop = session.get("active_property", {})
+                                        property_id = active_prop.get("Property_ID", "Unknown")
+                                        phone_number = from_number # The user's WhatsApp number
+                                        
+                                        # 4. Append to Google Sheets
+                                        try:
+                                            workspace = GoogleSpreadsheetClient(tenant_id, booking_sheet_name, property_sheet_name)
+                                            workspace.append_lead_record(phone_number, name, email, property_id, session.get("market", "PK"))
+                                            logger.info(f"Lead successfully saved to Google Sheets: {name}, {phone_number}")
+                                        except Exception as e:
+                                            logger.error(f"Failed to save lead to Google Sheets: {e}")
                                         
                                         # Reset state after collecting info
                                         session["state"] = "INSPECTING_PROPERTY" # Put them back in Q&A mode for the current property
                                         
-                                        reply_text = "Bohat shukriya janab! ✅ Aapki details hamare paas mehfooz ho gayi hain. Hamara agent jald hi aap se is property ke visit ke hawale se rabta karega. 🏡✨\n\nKya aapko is property ke baare mein kuch aur janna hai?"
+                                        reply_text = "Bohat shukriya janab! ✅ Aapki details hamare paas mehfooz ho gayi hain aur agent ko forward kar di gayi hain. Hamara numainda jald hi aap se rabta karega. 🏡✨\n\nKya aapko is property ke baare mein kuch aur janna hai?"
                                         send_whatsapp_text(tenant_id, from_number, reply_text, whatsapp_token)
                                         save_supabase_message(from_number, "user", msg_body, tenant_id)
                                         save_supabase_message(from_number, "assistant", reply_text, tenant_id)
