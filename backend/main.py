@@ -1180,72 +1180,40 @@ async def process_whatsapp_data(data: dict):
                                     session["chat_history"].append({"role": "assistant", "content": greeting_text})
                                     return PlainTextResponse(content="OK", status_code=200)
 
-                                # Check if user clicked an interactive quick reply button
-                                interactive = message.get("interactive", {})
-                                if interactive.get("type") == "button_reply":
-                                    button_id = interactive["button_reply"]["id"]
-                                    button_title = interactive["button_reply"]["title"]
-                                    logger.info(f"Interactive Button Clicked: {button_id} ({button_title})")
+                                # Parse interactive button clicks
+                                interactive_type = message.get("interactive", {}).get("type")
+                                if interactive_type == "button_reply":
+                                    button_id = message["interactive"]["button_reply"]["id"]
+                                    logger.info(f"User clicked interactive button: {button_id}")
                                     
+                                    agency_name = str(session.get('agency_tag', 'Real Estate Agency')).replace('_', ' ').title()
+
                                     if button_id == "btn_cheaper":
-                                        logger.info("Cheaper option requested. Checking DB live.")
-                                        current_budget = float(session.get("budget", 50000000))
-                                        reduced_budget = current_budget * 0.8
-                                        
-                                        # Fetch sheet data live
-                                        workspace = GoogleSpreadsheetClient(tenant_id, tenant_config.get("booking_sheet_name"), tenant_config.get("property_sheet_name"))
-                                        sheet = workspace.get_property_sheet()
-                                        records = sheet.get_all_records()
-                                        import pandas as pd
-                                        df = pd.DataFrame(records)
-                                        
-                                        # Filter by exact criteria but with reduced budget
-                                        if 'Status' in df.columns:
-                                            df = df[df['Status'].astype(str).str.lower() != 'sold']
-                                        if session.get("purpose") and 'Listing_Type' in df.columns:
-                                            df = df[df['Listing_Type'].astype(str).str.lower() == session.get("purpose")]
-                                        if session.get("property_type") and 'Property_Type' in df.columns:
-                                            df = df[df['Property_Type'].astype(str).str.lower() == session.get("property_type")]
-                                        if session.get("location") and 'Society_Area' in df.columns:
-                                            df = df[df['Society_Area'].astype(str).str.contains(session.get("location"), case=False, na=False)]
-                                        
-                                        # Strict budget check
-                                        if 'Demand_PKR' in df.columns:
-                                            df_demand = pd.to_numeric(df["Demand_PKR"], errors='coerce')
-                                            df_cheaper = df[df_demand <= reduced_budget]
-                                        else:
-                                            df_cheaper = df.head(0)
-                                        
-                                        if len(df_cheaper) > 0:
-                                            cheaper_price = format_pkr_currency(df_cheaper.iloc[0]['Demand_PKR'])
-                                            reply_text = f"Ji Janab! 🌟 Hamare paas is location mein ek aur behtareen option majood hai jiska demand PKR {cheaper_price} hai. Kya main aapko iski tasveerein aur tafseelaat bhejun? 📩"
-                                            session["budget"] = reduced_budget  # Update session
-                                            session["state"] = None # Reset state to trigger search on 'yes'
-                                        else:
-                                            reply_text = f"Janab, is location mein is se sasti option filhal sold out hai. 🏢 Lekin jo property maine aapko abhi dikhayi hai, wo apni condition ke hisaab se market mein sab se behtareen deal hai! 💯\n\nKya aap usi property ka visit schedule karna chahenge, ya hum kisi aur location mein dekhein?"
-                                        
-                                        send_whatsapp_text(tenant_id, from_number, reply_text, whatsapp_token)
-                                        save_supabase_message(from_number, "user", f"Clicked Sasti Option", tenant_id)
-                                        save_supabase_message(from_number, "assistant", reply_text, tenant_id)
+                                        # Clear old budget and drop out of inspecting state
+                                        session["state"] = None 
+                                        session["budget"] = None 
+                                        ai_response = "Janab, bilkul! Main aapko is se kam price mein options dikhata hoon. Barah-e-karam apna naya approximate budget bata dein? 📉"
+                                        send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
+                                        save_supabase_message(from_number, "user", "Clicked Sasti Option", tenant_id)
+                                        save_supabase_message(from_number, "assistant", ai_response, tenant_id)
                                         return PlainTextResponse(content="OK", status_code=200)
 
                                     elif button_id == "btn_next":
-                                        # Clear active state and ask for criteria adjustment
-                                        session["state"] = None
-                                        session["active_property"] = None
-                                        reply_text = "Koi masla nahi janab! 🔄 Aap mazeed options ke liye apni requirement (jaise location, rooms ya budget) mein kya tabdeeli karna chahenge?"
-                                        send_whatsapp_text(tenant_id, from_number, reply_text, whatsapp_token)
-                                        save_supabase_message(from_number, "user", f"Clicked Koi Aur Option", tenant_id)
-                                        save_supabase_message(from_number, "assistant", reply_text, tenant_id)
+                                        # Clear property state to allow fresh criteria
+                                        session["state"] = None 
+                                        ai_response = f"Koi masla nahi janab! {agency_name} ke paas bohat options hain. Aap kisi aur area ya different size mein dekhna chahenge? 🔄"
+                                        send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
+                                        save_supabase_message(from_number, "user", "Clicked Koi Aur Option", tenant_id)
+                                        save_supabase_message(from_number, "assistant", ai_response, tenant_id)
                                         return PlainTextResponse(content="OK", status_code=200)
 
                                     elif button_id == "btn_visit":
-                                        # Transition to Lead Collection State
-                                        session["state"] = "BOOKING_VISIT"
-                                        reply_text = "Zabardast janab! 🤝 Is property ka visit schedule karne ke liye barah-e-karam apna *Poora Naam* aur *Email* share kardein taake hamara agent aapse rabta kare."
-                                        send_whatsapp_text(tenant_id, from_number, reply_text, whatsapp_token)
-                                        save_supabase_message(from_number, "user", f"Clicked Visit Schedule", tenant_id)
-                                        save_supabase_message(from_number, "assistant", reply_text, tenant_id)
+                                        # Transition to lead capture state
+                                        session["state"] = "SCHEDULING_VISIT"
+                                        ai_response = "Behtareen! Is property ka physical visit arrange karne ke liye, barah-e-karam apna Pura Naam aur Phone Number share kardein taake hamara agent aapse rabta kar le. 📅🤝"
+                                        send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
+                                        save_supabase_message(from_number, "user", "Clicked Visit Schedule", tenant_id)
+                                        save_supabase_message(from_number, "assistant", ai_response, tenant_id)
                                         return PlainTextResponse(content="OK", status_code=200)
 
                                 # =========================================================================================
