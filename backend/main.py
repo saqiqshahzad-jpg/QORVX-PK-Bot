@@ -364,26 +364,29 @@ def query_property_database(listing_type: str, bhk: int, city_society: str, budg
 # 📲 DYNAMIC TENANT WHATSAPP ROUTING
 # =========================================================================================
 def send_property_media_sequence(to_number: str, prop: dict, tenant_id: str, access_token: str):
-    # 1. Collect all image URLs (Main_Image, Image_2, ..., Image_9)
+    import time
+    
+    # 1. Collect all valid Image URLs
     image_keys = [k for k in prop.keys() if "image" in str(k).lower()]
     image_urls = []
-    for k in image_keys:
+    for k in sorted(image_keys):
         url = str(prop.get(k, "")).strip()
-        if url and url.startswith("http") and url != "N/A":
+        if url.startswith("http") and url != "N/A":
             image_urls.append(url)
 
-    # 2. Collect video URL if present
+    # 2. Collect Video URL
     video_url = str(prop.get("video") or prop.get("Video") or "").strip()
+    if "dropbox.com" in video_url:
+        video_url = video_url.replace("dl=0", "raw=1").replace("dl=1", "raw=1")
 
-    # 3. Dispatch Images sequentially
+    # 3. Dispatch Images
     for idx, img_url in enumerate(image_urls):
         caption = f"Photo {idx+1}/{len(image_urls)}" if idx > 0 else f"📸 Main View: {prop.get('Society_Area', '')}"
         send_whatsapp_media(tenant_id, to_number, img_url, "image", access_token, caption=caption)
+        time.sleep(0.5) # Prevent Meta rate-limit drops
 
-    # 4. Dispatch Video if exists
-    if video_url and video_url.startswith("http") and video_url != "N/A":
-        if "dropbox.com" in video_url:
-            video_url = video_url.replace("dl=0", "raw=1").replace("dl=1", "raw=1")
+    # 4. Dispatch Video
+    if video_url.startswith("http") and video_url != "N/A":
         send_whatsapp_media(tenant_id, to_number, video_url, "video", access_token, caption="🎥 Property Walkthrough Video")
 
 def send_whatsapp_quick_reply_buttons(to_number: str, body_text: str, tenant_id: str, access_token: str):
@@ -440,12 +443,23 @@ def send_whatsapp_quick_reply_buttons(to_number: str, body_text: str, tenant_id:
 def send_whatsapp_text(tenant_id: str, to_number: str, text_body: str, whatsapp_token: str):
     url = f"https://graph.facebook.com/v25.0/{tenant_id}/messages"
     headers = {"Authorization": f"Bearer {whatsapp_token}", "Content-Type": "application/json"}
-    payload = {"messaging_product": "whatsapp", "recipient_type": "individual", "to": to_number, "type": "text", "text": {"preview_url": False, "body": text_body}}
+    payload = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": to_number,
+        "type": "text",
+        "text": {
+            "preview_url": True,
+            "body": text_body
+        }
+    }
     try: 
         res = requests.post(url, headers=headers, json=payload, timeout=10)
         logger.info(f"📤 [SEND TEXT] To: {to_number} | Status: {res.status_code} | Body: {res.text[:200]}")
+        return res
     except Exception as e: 
         logger.error(f"🚨 [SEND TEXT CRASH] To: {to_number} | Error: {str(e)}")
+        return None
 
 def send_whatsapp_media(tenant_id: str, to_number: str, media_url: str, media_type: str, whatsapp_token: str, caption: str = None):
     """
@@ -985,7 +999,7 @@ async def process_whatsapp_data(data: dict):
                                     elif button_id == "btn_visit":
                                         # Transition to Lead Collection State
                                         session["state"] = "BOOKING_VISIT"
-                                        reply_text = "Zabardast janab! 🤝 Visit schedule karne ke liye barah-e-karam apna *Poora Naam* aur *Email* likh kar reply karein. (Aapka WhatsApp number hum automatically save kar lenge)."
+                                        reply_text = "Zabardast janab! 🤝 Is property ka visit schedule karne ke liye barah-e-karam apna *Poora Naam* aur *Email* share kardein taake hamara agent aapse rabta kare."
                                         send_whatsapp_text(tenant_id, from_number, reply_text, whatsapp_token)
                                         save_supabase_message(from_number, "user", f"Clicked Visit Schedule", tenant_id)
                                         save_supabase_message(from_number, "assistant", reply_text, tenant_id)
@@ -1254,31 +1268,34 @@ async def process_whatsapp_data(data: dict):
                                         logger.info(f"Processing Lead Info: {msg_body}")
                                         
                                         import re
+                                        from datetime import datetime
                                         
-                                        # 1. Extract Email using Regex
+                                        # 1. Extract Email
                                         email_match = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', msg_body)
                                         email = email_match.group(0) if email_match else "N/A"
                                         
-                                        # 2. Extract Name (Remove email from the string)
-                                        name = msg_body.replace(email, "").strip() if email != "N/A" else msg_body.strip()
+                                        # 2. Extract Name cleanly
+                                        name = msg_body.replace(email, "").replace(",", "").strip() if email != "N/A" else msg_body.replace(",", "").strip()
                                         if not name:
-                                            name = "Unknown"
+                                            name = "Client"
                                             
-                                        # 3. Extract Property ID and Phone Number
+                                        # 3. Extract Context Data
                                         active_prop = session.get("active_property", {})
-                                        property_id = active_prop.get("Property_ID", "Unknown")
-                                        phone_number = from_number # The user's WhatsApp number
+                                        property_id = active_prop.get("Property_ID", active_prop.get("property_id", "Prop_Unknown"))
+                                        phone_number = str(from_number)
+                                        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                                         
-                                        # 4. Append to Google Sheets
+                                        # 4. Save EXACT matching columns: [Property_ID, Name, Email, Phone_Number, Date_Time]
                                         try:
                                             workspace = GoogleSpreadsheetClient(tenant_id, booking_sheet_name, property_sheet_name)
-                                            workspace.append_lead_record(phone_number, name, email, property_id, session.get("market", "PK"))
-                                            logger.info(f"Lead successfully saved to Google Sheets: {name}, {phone_number}")
+                                            sheet = workspace.gc.open(property_sheet_name).worksheet("Leads")
+                                            sheet.append_row([property_id, name, email, phone_number, current_time])
+                                            logger.info(f"Lead saved successfully: {property_id} | {name} | {email} | {phone_number}")
                                         except Exception as e:
-                                            logger.error(f"Failed to save lead to Google Sheets: {e}")
+                                            logger.error(f"Failed to append row to Leads sheet: {e}")
                                         
                                         # Reset state after collecting info
-                                        session["state"] = "INSPECTING_PROPERTY" # Put them back in Q&A mode for the current property
+                                        session["state"] = "INSPECTING_PROPERTY"
                                         
                                         reply_text = "Bohat shukriya janab! ✅ Aapki details hamare paas mehfooz ho gayi hain aur agent ko forward kar di gayi hain. Hamara numainda jald hi aap se rabta karega. 🏡✨\n\nKya aapko is property ke baare mein kuch aur janna hai?"
                                         send_whatsapp_text(tenant_id, from_number, reply_text, whatsapp_token)
