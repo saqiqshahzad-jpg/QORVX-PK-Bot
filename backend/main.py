@@ -746,10 +746,20 @@ def extract_and_update_session(msg_body: str, phone: str, chat_history: list, te
     session["market"] = detected["market"]
     session["language"] = detected["language"]
 
-    # ── PURPOSE detection ──
-    purpose = detect_purpose(msg_body, chat_history)
-    if purpose != "unknown":
-        session["purpose"] = purpose
+    # 1. Purpose Extraction
+    if any(k in msg_lower for k in ["buy", "kharidna", "purchase", "khareedna"]):
+        session["purpose"] = "buy"
+    elif any(k in msg_lower for k in ["rent", "kiraya", "rent pr", "rent par"]):
+        session["purpose"] = "rent"
+
+    # 2. Property Type Extraction
+    if any(k in msg_lower for k in ["plot", "zameen"]):
+        session["property_type"] = "plot"
+        session["bhk"] = 0 # Plots don't have BHK
+    elif any(k in msg_lower for k in ["flat", "apartment"]):
+        session["property_type"] = "flat"
+    elif any(k in msg_lower for k in ["house", "makan", "bangla", "villa", "ghar"]):
+        session["property_type"] = "house"
 
     # ── Find last AI message for context ──
     last_ai_content = ""
@@ -1394,8 +1404,11 @@ STRICT RULES FOR YOUR RESPONSE:
                                             return PlainTextResponse(content="OK", status_code=200)
 
                                     # --- STATE 2: INITIAL SEARCH / QUALIFICATION ---
-                                    if session.get("state") != "INSPECTING_PROPERTY" and session.get("purpose") and session.get("location") and session.get("bhk") and session.get("budget"):
-                                        logger.info("All 4 params collected! Bypassing LLM and querying DB.")
+                                    is_plot = session.get("property_type") == "plot"
+                                    has_bhk = True if is_plot else bool(session.get("bhk"))
+                                    
+                                    if session.get("state") != "INSPECTING_PROPERTY" and session.get("purpose") and session.get("property_type") and session.get("location") and has_bhk and session.get("budget"):
+                                        logger.info("All 5 funnel parameters satisfied. Executing database query.")
                                         
                                         results = query_property_database(
                                             listing_type=session["purpose"],
@@ -1469,43 +1482,47 @@ STRICT RULES FOR YOUR RESPONSE:
                                             ai_response = f"Janab, filhal PKR {formatted_budget} ke budget mein {session.get('location', '')} mein hamari inventory sold out hai. 🏢"
                                             
                                     else:
-                                        # Identify the missing parameter dynamically in pure ROMAN URDU
-                                        missing_param = None
+                                        # Reset any accidental default
+                                        if not session.get("purpose") or session.get("purpose") not in ["buy", "rent"]:
+                                            session["purpose"] = None
+
+                                        # Determine missing parameter in STRICT sequential priority
+                                        missing_param_prompt = None
+                                        
+                                        # STEP 1: PURPOSE (Buy vs Rent)
                                         if not session.get("purpose"):
-                                            missing_param = "property kharidni hai ya rent par leni hai"
+                                            missing_param_prompt = "Janab, aap property kharidna chahte hain ya rent par lena chahte hain? 🏡"
+                                            
+                                        # STEP 2: PROPERTY TYPE (House vs Flat vs Plot)
+                                        elif not session.get("property_type"):
+                                            missing_param_prompt = "Aapko kis type ki property chahiye? (House, Flat ya Plot)? 🏢"
+                                            
+                                        # STEP 3: LOCATION (City / Society)
                                         elif not session.get("location"):
-                                            missing_param = "kis shehar ya specific society mein property dekhni hai"
-                                        elif not session.get("bhk"):
-                                            missing_param = "kitne rooms ya BHK ki requirement hai"
+                                            missing_param_prompt = "Aap kis shehar ya specific society mein property dekhna chahte hain? 📍"
+                                            
+                                        # STEP 4: BHK / ROOMS (Only required for House/Flat, SKIP for Plot)
+                                        elif session.get("property_type") in ["house", "flat", "apartment"] and not session.get("bhk"):
+                                            missing_param_prompt = "Aapko kitne rooms ya BHK ki requirement hai? 🛏️"
+                                            
+                                        # STEP 5: BUDGET (Dynamic phrasing based on Purpose)
                                         elif not session.get("budget"):
-                                            purpose_str = session.get("purpose", "buy")
-                                            missing_param = f"{'monthly rent ka' if purpose_str == 'rent' else 'kharidne ka'} approximate budget kitna hai"
+                                            if session.get("purpose") == "rent":
+                                                missing_param_prompt = "Aapka approximate monthly rent ka budget kitna hai? 💰"
+                                            else:
+                                                missing_param_prompt = "Aapka approximate total purchase budget kitna hai? 💰"
 
-                                        # Only run this if we are NOT in the post-search property inspection phase
-                                        if missing_param and session.get("state") != "INSPECTING_PROPERTY":
-                                            logger.info(f"Missing parameter: {missing_param}. Routing to LLM.")
+                                        # If qualification is still incomplete and we are not in Q&A state, prompt the user
+                                        if missing_param_prompt and session.get("state") != "INSPECTING_PROPERTY":
+                                            logger.info(f"Funnel Incomplete. Dispatching sequential prompt.")
                                             
-                                            agency_name = str(session.get('agency_tag', 'Real Estate Agency')).replace('_', ' ').title()
-                                            
-                                            DYNAMIC_PROMPT = f"""Identity: Aap {agency_name} ke smart aur polite consultant hain.
-        
-User's Current Message: "{msg_body}"
-
-Strict Instructions:
-1. The user has NOT provided this information yet: "{missing_param}".
-2. GREETING RULE: If the user's message is just a greeting (like "salam", "hello"), reply with a warm welcome first (e.g., "Walaikum Assalam! {agency_name} mein khush-amdeed...").
-3. QUESTION RULE: Naturally and politely ask the user to provide the missing info. Example: "Janab, aapko {missing_param}?"
-4. GENDER-NEUTRAL: Use 'Janab' or 'Aap'. Strictly NEVER use 'Sir' or 'Bhai'.
-5. LANGUAGE: 100% Natural, conversational Roman Urdu. Do NOT use literal English phrases.
-"""
-                                            completion = robust_chat_completion([{"role": "system", "content": DYNAMIC_PROMPT}], 0.3, 150)
-                                            ai_response = completion.choices[0].message.content
-                                            
-                                            if not ai_response or str(ai_response).strip() == "":
-                                                if not session.get("purpose") and not session.get("location") and not session.get("bhk") and not session.get("budget"):
-                                                    ai_response = f"Walaikum Assalam! {agency_name} mein khush-amdeed. Main aapki kya madad kar sakta hoon? 🏡✨"
-                                                else:
-                                                    ai_response = f"Barah-e-karam apna {missing_param} confirm karein taake hum behtareen properties dikha sakein. 🏛️"
+                                            # If this is the very first message and contains a greeting
+                                            if not session.get("greeting_done") and any(g in msg_body.lower() for g in ["salam", "hello", "hi", "hey"]):
+                                                session["greeting_done"] = True
+                                                agency_name = str(session.get("agency_tag", "Real Estate")).replace("_", " ").title()
+                                                ai_response = f"Walaikum Assalam! {agency_name} mein khush-amdeed. ✨\n\n{missing_param_prompt}"
+                                            else:
+                                                ai_response = missing_param_prompt
 
                                     save_supabase_message(from_number, "user", msg_body, tenant_id)
                                     if ai_response and "I am scanning our off-market registries" not in ai_response and "processing your luxury portfolio request" not in ai_response:
