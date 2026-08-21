@@ -31,6 +31,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, RedirectResponse
 from pydantic import BaseModel
 from groq import Groq
+import tempfile
 
 # ═══ SESSION STATE & DEDUP STORES ═══
 AGENCY_KEYWORDS = ["al-madina", "dha-estates", "qorvx"]
@@ -59,6 +60,52 @@ MY_VERIFY_TOKEN = os.environ.get("WHATSAPP_VERIFY_TOKEN", "ALAAUDIN_SECRET_TOKEN
 client = Groq(api_key=GROQ_API_KEY, max_retries=0)
 MODEL_ID = "openai/gpt-oss-20b"
 FALLBACK_MODEL = "openai/gpt-oss-20b"
+
+# =========================================================================================
+# 🎙️ AUDIO MESSAGE PROCESSING (Meta Download + OpenAI Whisper)
+# =========================================================================================
+def download_whatsapp_audio(media_id: str, token: str):
+    """Fetches media URL from Meta and downloads the raw audio file to a temp file."""
+    try:
+        # Step 1: Get Media URL from Meta
+        url_req = requests.get(f"https://graph.facebook.com/v25.0/{media_id}", headers={"Authorization": f"Bearer {token}"})
+        if url_req.status_code != 200:
+            logger.error(f"Meta Media URL fetch failed: {url_req.status_code} | {url_req.text}")
+            return None
+        
+        media_url = url_req.json().get("url")
+        if not media_url:
+            logger.error("Meta returned no URL for media_id.")
+            return None
+            
+        # Step 2: Download actual file
+        media_req = requests.get(media_url, headers={"Authorization": f"Bearer {token}"})
+        if media_req.status_code == 200:
+            # Save to a temporary file
+            temp_audio = tempfile.NamedTemporaryFile(delete=False, suffix=".ogg")
+            with open(temp_audio.name, "wb") as f:
+                f.write(media_req.content)
+            return temp_audio.name
+        else:
+            logger.error(f"Meta audio download failed: {media_req.status_code}")
+    except Exception as e:
+        logger.error(f"Exception downloading audio: {e}")
+    return None
+
+def transcribe_audio_groq(file_path: str):
+    """Transcribes audio file using Groq's fast and free Whisper API."""
+    try:
+        client = Groq() # Automatically uses the existing GROQ_API_KEY from environment
+        with open(file_path, "rb") as file:
+            transcription = client.audio.transcriptions.create(
+                file=(file_path, file.read()),
+                model="whisper-large-v3",
+                response_format="text"
+            )
+        return transcription.text
+    except Exception as e:
+        logger.error(f"Groq Whisper Error: {e}")
+        raise e
 
 def robust_chat_completion(messages_array, temperature, max_tokens):
     try:
@@ -273,7 +320,7 @@ def handle_calendar_booking(date_req: str, time_req: str, phone: str, tenant_id:
         logger.error(f"🚨 Booking Engine Crash: {str(e)}")
         return {"status": "error"}
 
-def query_property_database(listing_type: str, bhk: int, city_society: str, budget: int, tenant_id: str, booking_sheet_name: str, property_sheet_name: str, agency_tag: str = None):
+def query_property_database(listing_type: str, bhk: int, city_society: str, budget: int, tenant_id: str, booking_sheet_name: str, property_sheet_name: str, agency_tag: str = None, property_type: str = None):
     try:
         logger.info(f"Initializing GoogleSpreadsheetClient for tenant: {tenant_id}, booking_sheet: {booking_sheet_name}, property_sheet: {property_sheet_name}")
         workspace = GoogleSpreadsheetClient(tenant_id, booking_sheet_name, property_sheet_name)
@@ -316,6 +363,13 @@ def query_property_database(listing_type: str, bhk: int, city_society: str, budg
             
             df = df[mask_city | mask_society]
             logger.info(f"After Location Filter: {len(df)} properties left.")
+
+        # After location filter, strictly filter property type
+        if property_type:
+            prop_type_col = get_col("property_type")
+            if prop_type_col:
+                df = df[df[prop_type_col].astype(str).str.lower() == property_type.strip().lower()]
+                logger.info(f"After Property Type Filter ({property_type}): {len(df)} properties left.")
 
         # 4. Exact Numeric BHK Filter
         if bhk:
@@ -987,6 +1041,36 @@ async def process_whatsapp_data(data: dict):
                                     msg_body = message["interactive"]["button_reply"]["title"].strip()
                                     # 🔥 YEH HAI JADU! Chupa hua token humne is variable mein save kar liya
                                     btn_id = message["interactive"]["button_reply"]["id"].strip()
+
+                            # --- HANDLE AUDIO (VOICE NOTES) ---
+                            elif message.get("type") == "audio":
+                                audio_id = message["audio"]["id"]
+                                logger.info(f"🎙️ Audio message received. ID: {audio_id}")
+                                
+                                audio_file_path = download_whatsapp_audio(audio_id, whatsapp_token)
+                                if audio_file_path:
+                                    try:
+                                        msg_body = transcribe_audio_groq(audio_file_path)
+                                        logger.info(f"🎙️ Groq Transcription Success: {msg_body}")
+                                    except Exception as e:
+                                        logger.error(f"🎙️ Groq Transcription Error: {e}")
+                                        reply_text = "Maazrat janab, internet connection ya background shor ki wajah se main aapki aawaz theek se sun nahi paya. Barah-e-karam apna paigham text mein likh kar bhej dein. 📝"
+                                        send_whatsapp_text(tenant_id, from_number, reply_text, whatsapp_token)
+                                        save_supabase_message(from_number, "user", "[Voice Note - Transcription Failed]", tenant_id)
+                                        save_supabase_message(from_number, "assistant", reply_text, tenant_id)
+                                        return PlainTextResponse(content="OK", status_code=200)
+                                    finally:
+                                        # Clean up temp file to save disk space
+                                        if audio_file_path and os.path.exists(audio_file_path):
+                                            os.remove(audio_file_path)
+                                else:
+                                    logger.error("Failed to download audio media from Meta.")
+                                    reply_text = "Maazrat janab, aapki voice note load nahi ho saki. Barah-e-karam dobara bhejein ya text mein likh dein. 📝"
+                                    send_whatsapp_text(tenant_id, from_number, reply_text, whatsapp_token)
+                                    save_supabase_message(from_number, "user", "[Voice Note - Download Failed]", tenant_id)
+                                    save_supabase_message(from_number, "assistant", reply_text, tenant_id)
+                                    return PlainTextResponse(content="OK", status_code=200)
+
                             else:
                                 fallback_msg = "Sir, lagta hai network error ki wajah se main aapka message theek se samajh nahi paya. 😅 Hum aapki property search ki baat kar rahe thay—kya aap mujhe apna approximate budget confirm kar sakte hain taake hum aage barhein?"
                                 save_supabase_message(from_number, "user", f"[Media/Unsupported: {message.get('type')}]", tenant_id)
@@ -999,25 +1083,49 @@ async def process_whatsapp_data(data: dict):
                                 db_history = get_supabase_history(from_number, tenant_id)
                                 last_ai_msg = db_history[-1]["content"] if db_history else ""
                                 
-                                # --- INTENT SHIFT & SEARCH RESET DETECTOR ---
-                                msg_lower = msg_body.lower()
-                                property_type_keywords = ["plot", "house", "makan", "flat", "apartment", "bangla"]
-                                action_keywords = ["kharidna", "buy", "rent", "bechna", "chaihe", "chahiye"]
-                                
-                                _sess_check = get_session(from_number, tenant_id)
-                                if any(pt in msg_lower for pt in property_type_keywords) and any(ak in msg_lower for ak in action_keywords):
-                                    logger.info("New search intent detected. Clearing previous session parameters.")
-                                    _sess_check["state"] = None
-                                    _sess_check["active_property"] = None
-                                    _sess_check["bhk"] = None
-                                    _sess_check["budget"] = None
-                                    _sess_check["purpose"] = "buy" if any(b in msg_lower for b in ["buy", "kharidna", "plot"]) else "rent"
+                                msg_clean = msg_body.lower().strip()
+                                session = get_session(from_number, tenant_id)
+
+                                # Initialize chat history if empty
+                                if "chat_history" not in session:
+                                    session["chat_history"] = []
                                     
-                                    # Extract property type
-                                    for pt in ["plot", "house", "flat", "apartment"]:
-                                        if pt in msg_lower:
-                                            _sess_check["property_type"] = pt
-                                            break
+                                # Append current user message
+                                session["chat_history"].append({"role": "user", "content": msg_body})
+                                
+                                # Ensure memory doesn't exceed the last 6 turns (to save tokens)
+                                if len(session["chat_history"]) > 6:
+                                    session["chat_history"] = session["chat_history"][-6:]
+
+                                # --- 1. INTENT SHIFT DETECTOR ---
+                                new_prop_type = None
+                                if any(k in msg_clean for k in ["plot", "zameen"]): new_prop_type = "plot"
+                                elif any(k in msg_clean for k in ["flat", "apartment"]): new_prop_type = "flat"
+                                elif any(k in msg_clean for k in ["house", "makan", "bangla"]): new_prop_type = "house"
+
+                                current_prop_type = session.get("property_type")
+                                
+                                # If the user changed their mind about the property type mid-conversation
+                                if new_prop_type and current_prop_type and new_prop_type != current_prop_type:
+                                    logger.info(f"Intent Shift: {current_prop_type} -> {new_prop_type}. Wiping conflicting session data.")
+                                    session["property_type"] = new_prop_type
+                                    session["budget"] = None  # New property means new budget needed
+                                    session["bhk"] = None
+                                    session["state"] = None
+                                    session["active_property"] = None
+                                    
+                                    # Ask LLM to naturally acknowledge the shift
+                                    shift_prompt = f"User was looking for {current_prop_type}, but just said: '{msg_body}'. Acknowledge the change politely in Roman Urdu, and ask if they want to BUY or RENT this new {new_prop_type}."
+                                    
+                                    system_msg = {"role": "system", "content": shift_prompt}
+                                    llm_messages = [system_msg] + session.get("chat_history", [])
+                                    
+                                    completion = robust_chat_completion(llm_messages, 0.3, 100)
+                                    ai_response = completion.choices[0].message.content
+                                    session["chat_history"].append({"role": "assistant", "content": ai_response})
+                                    
+                                    send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
+                                    return PlainTextResponse(content="OK", status_code=200)
 
                                 # ═══ SESSION STATE: Extract & persist parameters ═══
                                 # ── Update Core Session Context ──
@@ -1046,11 +1154,30 @@ async def process_whatsapp_data(data: dict):
                                     raw_agency_tag = session.get("agency_tag", "Hamari Agency")
                                     agency_name = str(raw_agency_tag).replace("_", " ").title()
                                     
-                                    greeting_text = f"Walaikum Assalam! {agency_name} mein khush-amdeed. ✨\n\nJanab, aap property kharidna chahte hain ya rent par lena chahte hain? 🏡"
-                                    
+                                    # Check if user exists in Leads sheet
+                                    known_name = None
+                                    try:
+                                        workspace = GoogleSpreadsheetClient(tenant_id, tenant_config.get("booking_sheet_name"), tenant_config.get("property_sheet_name"))
+                                        leads_sheet = workspace.gc.open(tenant_config.get("property_sheet_name")).worksheet("Leads")
+                                        # Find cell matching the phone number
+                                        cell = leads_sheet.find(str(from_number))
+                                        if cell:
+                                            # Name is in Column C (index 3) of the matched row
+                                            known_name = leads_sheet.cell(cell.row, 3).value
+                                    except Exception as e:
+                                        logger.warning(f"Could not check Leads sheet for returning user: {e}")
+
+                                    if known_name and known_name != "Client":
+                                        greeting_text = f"Walaikum Assalam {known_name} janab! {agency_name} mein wapis aane ka shukriya. ✨\n\nKahiye, aaj main aapki kya madad kar sakta hoon? 🏡"
+                                    else:
+                                        greeting_text = f"Walaikum Assalam! {agency_name} mein khush-amdeed. ✨\n\nJanab, aap property kharidna chahte hain ya rent par lena chahte hain? 🏡"
+                                        
                                     send_whatsapp_text(tenant_id, from_number, greeting_text, whatsapp_token)
                                     save_supabase_message(from_number, "user", msg_body, tenant_id)
                                     save_supabase_message(from_number, "assistant", greeting_text, tenant_id)
+                                    
+                                    # Append to history
+                                    session["chat_history"].append({"role": "assistant", "content": greeting_text})
                                     return PlainTextResponse(content="OK", status_code=200)
 
                                 # Check if user clicked an interactive quick reply button
@@ -1061,15 +1188,42 @@ async def process_whatsapp_data(data: dict):
                                     logger.info(f"Interactive Button Clicked: {button_id} ({button_title})")
                                     
                                     if button_id == "btn_cheaper":
-                                        # Reduce budget by 20% and clear active state
-                                        current_budget = float(session.get("budget", 10000000))
-                                        session["budget"] = current_budget * 0.8
-                                        session["state"] = None  # Exit inspecting state
-                                        session["active_property"] = None
+                                        logger.info("Cheaper option requested. Checking DB live.")
+                                        current_budget = float(session.get("budget", 50000000))
+                                        reduced_budget = current_budget * 0.8
                                         
-                                        # Format new budget to show user
-                                        new_budget_str = format_pkr_currency(session["budget"])
-                                        reply_text = f"Ji Janab, main ne aapka budget thora kam set kar diya hai (Approx. PKR {new_budget_str}). Hum is naye budget mein options dhoondhte hain. Kya main search shuru karun? 🔍"
+                                        # Fetch sheet data live
+                                        workspace = GoogleSpreadsheetClient(tenant_id, tenant_config.get("booking_sheet_name"), tenant_config.get("property_sheet_name"))
+                                        sheet = workspace.get_property_sheet()
+                                        records = sheet.get_all_records()
+                                        import pandas as pd
+                                        df = pd.DataFrame(records)
+                                        
+                                        # Filter by exact criteria but with reduced budget
+                                        if 'Status' in df.columns:
+                                            df = df[df['Status'].astype(str).str.lower() != 'sold']
+                                        if session.get("purpose") and 'Listing_Type' in df.columns:
+                                            df = df[df['Listing_Type'].astype(str).str.lower() == session.get("purpose")]
+                                        if session.get("property_type") and 'Property_Type' in df.columns:
+                                            df = df[df['Property_Type'].astype(str).str.lower() == session.get("property_type")]
+                                        if session.get("location") and 'Society_Area' in df.columns:
+                                            df = df[df['Society_Area'].astype(str).str.contains(session.get("location"), case=False, na=False)]
+                                        
+                                        # Strict budget check
+                                        if 'Demand_PKR' in df.columns:
+                                            df_demand = pd.to_numeric(df["Demand_PKR"], errors='coerce')
+                                            df_cheaper = df[df_demand <= reduced_budget]
+                                        else:
+                                            df_cheaper = df.head(0)
+                                        
+                                        if len(df_cheaper) > 0:
+                                            cheaper_price = format_pkr_currency(df_cheaper.iloc[0]['Demand_PKR'])
+                                            reply_text = f"Ji Janab! 🌟 Hamare paas is location mein ek aur behtareen option majood hai jiska demand PKR {cheaper_price} hai. Kya main aapko iski tasveerein aur tafseelaat bhejun? 📩"
+                                            session["budget"] = reduced_budget  # Update session
+                                            session["state"] = None # Reset state to trigger search on 'yes'
+                                        else:
+                                            reply_text = f"Janab, is location mein is se sasti option filhal sold out hai. 🏢 Lekin jo property maine aapko abhi dikhayi hai, wo apni condition ke hisaab se market mein sab se behtareen deal hai! 💯\n\nKya aap usi property ka visit schedule karna chahenge, ya hum kisi aur location mein dekhein?"
+                                        
                                         send_whatsapp_text(tenant_id, from_number, reply_text, whatsapp_token)
                                         save_supabase_message(from_number, "user", f"Clicked Sasti Option", tenant_id)
                                         save_supabase_message(from_number, "assistant", reply_text, tenant_id)
@@ -1445,12 +1599,22 @@ STRICT RULES FOR YOUR RESPONSE:
 3. ZERO HALLUCINATIONS: Agar koi baat BACKGROUND CONTEXT mein nahi hai, toh politely maazrat karein aur kahein: "Janab, is detail ke liye main agent se baat karwa deta hoon, barah-e-karam apna Name aur Email share kardein."
 4. GENDER-NEUTRAL: Always use 'Janab' or 'Aap'. NEVER use 'Sir' or 'Bhai'.
 5. TONE: 100% Conversational and natural Roman Urdu. Like a helpful human, not a robot.
+6. OFF-TOPIC RECOVERY: Agar user koi aisi baat kare jo property se related nahi hai, toh politely uski baat ka short jawab dein aur aakhir mein add karein: "Waise janab, jo property maine aapko abhi dikhayi hai, kya aap uska visit schedule karna chahenge?"
 """
-                                            # Call LLM for direct answer
-                                            completion = robust_chat_completion([{"role": "system", "content": QNA_PROMPT}], 0.3, 200)
+                                            # Build System Prompt
+                                            system_msg = {"role": "system", "content": QNA_PROMPT}
+                                            
+                                            # Combine System Prompt + Chat History
+                                            llm_messages = [system_msg] + session.get("chat_history", [])
+                                            
+                                            # Call LLM with full context
+                                            completion = robust_chat_completion(llm_messages, 0.3, 200)
                                             ai_response = completion.choices[0].message.content
                                             if ai_response is None:
                                                 ai_response = "Janab, main abhi samajh nahi saka."
+                                                
+                                            # Save Assistant's response to memory
+                                            session["chat_history"].append({"role": "assistant", "content": ai_response})
                                                 
                                             send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
                                             save_supabase_message(from_number, "user", msg_body, tenant_id)
@@ -1472,7 +1636,8 @@ STRICT RULES FOR YOUR RESPONSE:
                                             tenant_id=tenant_id,
                                             booking_sheet_name=booking_sheet_name,
                                             property_sheet_name=property_sheet_name,
-                                            agency_tag=session.get("agency_tag")
+                                            agency_tag=session.get("agency_tag"),
+                                            property_type=session.get("property_type")
                                         )
                                         
                                         # HARD-WIRE THE RESPONSE:
@@ -1573,6 +1738,7 @@ STRICT RULES FOR YOUR RESPONSE:
                                             send_whatsapp_text(tenant_id, from_number, missing_param_prompt, whatsapp_token)
                                             save_supabase_message(from_number, "user", msg_body, tenant_id)
                                             save_supabase_message(from_number, "assistant", missing_param_prompt, tenant_id)
+                                            session["chat_history"].append({"role": "assistant", "content": missing_param_prompt})
                                             return PlainTextResponse(content="OK", status_code=200)
 
                                     save_supabase_message(from_number, "user", msg_body, tenant_id)
