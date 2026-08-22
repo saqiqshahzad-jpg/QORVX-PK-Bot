@@ -1943,6 +1943,7 @@ STRICT ANTI-HALLUCINATION RULES:
 12. ZERO ASSUMPTIONS: NEVER assume, guess, or make up missing parameters (like BHK, Property Type, Budget, or Location). If the user hasn't explicitly mentioned a parameter in their CURRENT request, you must keep it as `null` in the JSON.
 13. STEP-BY-STEP QUESTIONING: If a parameter is `null`, ask for it explicitly. Do not combine missing parameters with assumed values. (e.g., If property type is missing, say 'Aap kis type ki property dekh rahe hain? Flat, Plot, ya Ghar?')
 14. CLEAN SLATE ON NEW INTENT: When the user clicks a new interactive button (like 'Kharidni Hai'), their active search parameters (bhk, location, budget, property_type) must be treated as completely blank/null unless they explicitly type them again.
+15. INTENT SHIFT WIPE: CRITICAL: If the user changes their primary property requirement mid-chat (e.g., switching from Plot to Flat, or from Buy to Rent), you MUST IMMEDIATELY SET the previous `budget` and `bhk` to `null`. DO NOT carry over old budgets to a new property type. Treat it as a fresh search and gracefully ask the user for their new budget and requirements for this newly requested property.
 """
                                             completion = robust_chat_completion([{"role": "system", "content": DYNAMIC_PROMPT}], 0.3, 150)
                                             ai_response = completion.choices[0].message.content
