@@ -1934,6 +1934,11 @@ CORE TRAINING FOR CONVERSATION & INTENT SHIFTS:
 9. BHK SKIP FOR PLOTS: If the property type is 'plot', do NOT ask for BHK/rooms — skip directly to budget.
 10. BUDGET PHRASING: If purpose is 'rent', ask for "monthly rent budget". If purpose is 'buy', ask for "total purchase budget".
 11. CRITICAL: NEVER return an empty response. Always guide the user to the next step.
+
+STRICT ANTI-HALLUCINATION RULES:
+12. ZERO ASSUMPTIONS: NEVER assume, guess, or make up missing parameters (like BHK, Property Type, Budget, or Location). If the user hasn't explicitly mentioned a parameter in their CURRENT request, you must keep it as `null` in the JSON.
+13. STEP-BY-STEP QUESTIONING: If a parameter is `null`, ask for it explicitly. Do not combine missing parameters with assumed values. (e.g., If property type is missing, say 'Aap kis type ki property dekh rahe hain? Flat, Plot, ya Ghar?')
+14. CLEAN SLATE ON NEW INTENT: When the user clicks a new interactive button (like 'Kharidni Hai'), their active search parameters (bhk, location, budget, property_type) must be treated as completely blank/null unless they explicitly type them again.
 """
                                             completion = robust_chat_completion([{"role": "system", "content": DYNAMIC_PROMPT}], 0.3, 150)
                                             ai_response = completion.choices[0].message.content
