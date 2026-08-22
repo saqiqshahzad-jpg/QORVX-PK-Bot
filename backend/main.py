@@ -665,20 +665,22 @@ def send_menu_buttons(to_number: str, tenant_id: str, whatsapp_token: str):
         "type": "interactive",
         "interactive": {
             "type": "button",
-            "body": {"text": "Chaliye shuru karte hain! Aap ki kya requirement hai? 👇"},
+            "body": {"text": "Janab, aap property ke sath kya karna chahte hain? Neeche option select karein 👇"},
             "action": {
                 "buttons": [
-                    {"type": "reply", "reply": {"id": "intent_buy", "title": "Buy Property 🏠"}},
-                    {"type": "reply", "reply": {"id": "intent_rent", "title": "Rent Property 🏡"}},
-                    {"type": "reply", "reply": {"id": "intent_sell", "title": "Property Bechni Hai 💰"}}
+                    {"type": "reply", "reply": {"id": "intent_buy", "title": "Kharidni Hai"}},
+                    {"type": "reply", "reply": {"id": "intent_rent", "title": "Rent Par Leni"}},
+                    {"type": "reply", "reply": {"id": "intent_sell", "title": "Bechni Hai"}}
                 ]
             }
         }
     }
     try: 
-        requests.post(url, headers=headers, json=payload, timeout=10)
+        response = requests.post(url, headers=headers, json=payload, timeout=10)
+        if response.status_code != 200:
+            logger.error(f"Failed to send interactive buttons: {response.text}")
     except Exception as e: 
-        logger.error(f"🚨 [SEND MENU CRASH]: {str(e)}")
+        logger.error(f"Error sending interactive buttons: {e}")
 
 def send_property_button(tenant_id: str, to_number: str, body_text: str, prop_id: str, whatsapp_token: str):
     url = f"https://graph.facebook.com/v25.0/{tenant_id}/messages"
@@ -1080,11 +1082,20 @@ async def process_whatsapp_data(data: dict):
                             print(f"📩 [WEBHOOK] Message from: {from_number} | Type: {message.get('type')} | Tenant: {tenant_id}", flush=True)
                             logger.info(f"📩 [WEBHOOK] Message from: {from_number} | Type: {message.get('type')} | Tenant: {tenant_id}")
 
+                            # ═══ DEDUP BYPASS FOR FIRST-TIME USERS & MENU ═══
+                            peek_body = ""
+                            if message.get("type") == "text":
+                                peek_body = message.get("text", {}).get("body", "").strip().lower()
+                                
+                            session = get_user_session(from_number, tenant_id)
+                            is_first_time = (session is None)
+                            is_menu = (peek_body == "menu")
+
                             # ═══ DEDUP: Skip if Meta retried this message ═══
                             msg_id = message.get("id", "")
                             if msg_id:
                                 now = time.time()
-                                if msg_id in PROCESSED_MSG_IDS:
+                                if msg_id in PROCESSED_MSG_IDS and not (is_first_time or is_menu):
                                     logger.info(f"⚡ [DEDUP] Skipping duplicate: {msg_id}")
                                     continue
                                 PROCESSED_MSG_IDS[msg_id] = now
@@ -1151,8 +1162,8 @@ async def process_whatsapp_data(data: dict):
                                 msg_clean = msg_body.lower().strip()
                                 
                                 # --- INTELLIGENT ROUTER & SUPABASE PERSISTENCE ---
-                                session = get_user_session(from_number, tenant_id)
-                                
+                                # session is already fetched above for DEDUP check
+
                                 if session is None:
                                     logger.info("New user detected. Sending Menu.")
                                     session = {"purpose": None, "bhk": None, "location": None, "budget": None, "agency_tag": None, "state": None, "intent": None, "greeting_done": True, "chat_history": []}
@@ -1343,7 +1354,7 @@ Action: Greet them back politely. Acknowledge their past interest naturally. Ask
                                 # =========================================================================================
                                 # 🏠 STATE-MACHINE INTERCEPTORS: BUYER INTAKE FUNNEL
                                 # =========================================================================================
-                                if msg_body == "Buy Property 🏠":
+                                if msg_body in ["Buy Property 🏠", "Kharidni Hai"]:
                                     session["purpose"] = "buy"
                                     ai_response = "Excellent choice. Let's find your next off-market acquisition portfolio. What is your preferred location or city? 📍"
                                     save_supabase_message(from_number, "user", msg_body, tenant_id)
@@ -1354,7 +1365,7 @@ Action: Greet them back politely. Acknowledge their past interest naturally. Ask
                                 # =========================================================================================
                                 # 🏡 STATE-MACHINE INTERCEPTORS: RENT INTAKE FUNNEL
                                 # =========================================================================================
-                                elif msg_body == "Rent Property 🏡":
+                                elif msg_body in ["Rent Property 🏡", "Rent Par Leni"]:
                                     session["purpose"] = "rent"
                                     ai_response = "Let's find you the perfect rental. What is your preferred location or city? 📍"
                                     save_supabase_message(from_number, "user", msg_body, tenant_id)
