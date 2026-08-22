@@ -1200,6 +1200,64 @@ async def process_whatsapp_data(data: dict):
                                 # Register session for auto-save in finally block
                                 active_sessions.append((from_number, session, tenant_id))
 
+                                # =========================================================================================
+                                # 🔘 INTERACTIVE BUTTON FAST-TRACK ROUTER
+                                # =========================================================================================
+                                if btn_id:
+                                    logger.info(f"User clicked interactive button: {btn_id}")
+                                    
+                                    if btn_id == "intent_buy":
+                                        session["purpose"] = "buy"
+                                        ai_response = "Behtareen! Janab, aap kis shehar ya specific society mein property dekhna chahte hain? 📍"
+                                        send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
+                                        save_supabase_message(from_number, "user", "Clicked Kharidni Hai", tenant_id)
+                                        save_supabase_message(from_number, "assistant", ai_response, tenant_id)
+                                        return PlainTextResponse(content="OK", status_code=200)
+
+                                    elif btn_id == "intent_rent":
+                                        session["purpose"] = "rent"
+                                        ai_response = "Zaroor! Janab, aap rent ke liye kis shehar ya area mein option dekh rahe hain? 📍"
+                                        send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
+                                        save_supabase_message(from_number, "user", "Clicked Rent Par Leni", tenant_id)
+                                        save_supabase_message(from_number, "assistant", ai_response, tenant_id)
+                                        return PlainTextResponse(content="OK", status_code=200)
+
+                                    elif btn_id == "intent_sell":
+                                        session["purpose"] = "sell"
+                                        session["state"] = "ASKING_SELL_TYPE"
+                                        ai_response = "Zabardast janab! 🤝 Aap kya bechna chahte hain? (Misaal ke taur par: Ghar, Flat, Plot, ya Commercial) 🏡"
+                                        send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
+                                        save_supabase_message(from_number, "user", "Clicked Bechni Hai", tenant_id)
+                                        save_supabase_message(from_number, "assistant", ai_response, tenant_id)
+                                        return PlainTextResponse(content="OK", status_code=200)
+
+                                    elif btn_id == "btn_cheaper":
+                                        session["state"] = None 
+                                        session["budget"] = None
+                                        session["seen_properties"] = []
+                                        ai_response = "Janab, bilkul! Main aapko is se kam price mein options dikhata hoon. Barah-e-karam apna naya approximate budget bata dein? 📉"
+                                        send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
+                                        save_supabase_message(from_number, "user", "Clicked Sasti Option", tenant_id)
+                                        save_supabase_message(from_number, "assistant", ai_response, tenant_id)
+                                        return PlainTextResponse(content="OK", status_code=200)
+
+                                    elif btn_id == "btn_next":
+                                        session["state"] = None
+                                        session["active_property"] = None
+                                        ai_response = f"Zaroor janab! Main aapko isi criteria mein agli behtareen property nikal kar deta hoon... 🔍"
+                                        send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
+                                        save_supabase_message(from_number, "user", "Clicked Koi Aur Option", tenant_id)
+                                        save_supabase_message(from_number, "assistant", ai_response, tenant_id)
+                                        return PlainTextResponse(content="OK", status_code=200)
+
+                                    elif btn_id == "btn_visit":
+                                        session["state"] = "SCHEDULING_VISIT"
+                                        ai_response = "Behtareen! Is property ka physical visit arrange karne ke liye, barah-e-karam apna Pura Naam aur Phone Number share kardein taake hamara agent aapse rabta kar le. 📅🤝"
+                                        send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
+                                        save_supabase_message(from_number, "user", "Clicked Visit Schedule", tenant_id)
+                                        save_supabase_message(from_number, "assistant", ai_response, tenant_id)
+                                        return PlainTextResponse(content="OK", status_code=200)
+
                                 if msg_clean == "menu":
                                     logger.info("User requested menu. Clearing context.")
                                     if "archived_intents" not in session:
@@ -1302,81 +1360,10 @@ Action: Greet them back politely. Acknowledge their past interest naturally. Ask
                                 session = extract_and_update_session(session, msg_body, db_history, tenant_id, tenant_config)
                                 logger.info(f"🧠 [SESSION] {from_number}: bhk={session.get('bhk')} loc={session.get('location')} purpose={session.get('purpose')} budget={session.get('budget')} market={session.get('market')}")
 
-                                # Parse interactive button clicks
-                                interactive_type = message.get("interactive", {}).get("type")
-                                if interactive_type == "button_reply":
-                                    button_id = message["interactive"]["button_reply"]["id"]
-                                    logger.info(f"User clicked interactive button: {button_id}")
-                                    
-                                    agency_name = str(session.get('agency_tag', 'Real Estate Agency')).replace('_', ' ').title()
-
-                                    if button_id == "btn_cheaper":
-                                        # Clear old budget, seen list, and drop out of inspecting state
-                                        session["state"] = None 
-                                        session["budget"] = None
-                                        session["seen_properties"] = []  # New budget = fresh inventory
-                                        ai_response = "Janab, bilkul! Main aapko is se kam price mein options dikhata hoon. Barah-e-karam apna naya approximate budget bata dein? 📉"
-                                        send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
-                                        save_supabase_message(from_number, "user", "Clicked Sasti Option", tenant_id)
-                                        save_supabase_message(from_number, "assistant", ai_response, tenant_id)
-                                        return PlainTextResponse(content="OK", status_code=200)
-
-                                    elif button_id == "btn_next":
-                                        # PAGINATION: Keep all search criteria intact, just reset state
-                                        # so the state machine re-triggers DB search with seen_properties filter
-                                        session["state"] = None
-                                        session["active_property"] = None
-                                        # DO NOT clear purpose, bhk, location, budget, property_type, or seen_properties
-                                        ai_response = f"Zaroor janab! Main aapko isi criteria mein agli behtareen property nikal kar deta hoon... 🔍"
-                                        send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
-                                        save_supabase_message(from_number, "user", "Clicked Koi Aur Option", tenant_id)
-                                        save_supabase_message(from_number, "assistant", ai_response, tenant_id)
-                                        return PlainTextResponse(content="OK", status_code=200)
-
-                                    elif button_id == "btn_visit":
-                                        # Transition to lead capture state
-                                        session["state"] = "SCHEDULING_VISIT"
-                                        ai_response = "Behtareen! Is property ka physical visit arrange karne ke liye, barah-e-karam apna Pura Naam aur Phone Number share kardein taake hamara agent aapse rabta kar le. 📅🤝"
-                                        send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
-                                        save_supabase_message(from_number, "user", "Clicked Visit Schedule", tenant_id)
-                                        save_supabase_message(from_number, "assistant", ai_response, tenant_id)
-                                        return PlainTextResponse(content="OK", status_code=200)
-
-                                    elif button_id == "intent_sell":
-                                        session["purpose"] = "sell"
-                                        session["state"] = "ASKING_SELL_TYPE"
-                                        ai_response = "Zabardast janab! 🤝 Aap kya bechna chahte hain? (Misaal ke taur par: Ghar, Flat, Plot, ya Commercial) 🏡"
-                                        send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
-                                        save_supabase_message(from_number, "user", "Clicked Sell Property", tenant_id)
-                                        save_supabase_message(from_number, "assistant", ai_response, tenant_id)
-                                        return PlainTextResponse(content="OK", status_code=200)
-
-                                # =========================================================================================
-                                # 🏠 STATE-MACHINE INTERCEPTORS: BUYER INTAKE FUNNEL
-                                # =========================================================================================
-                                if msg_body in ["Buy Property 🏠", "Kharidni Hai"]:
-                                    session["purpose"] = "buy"
-                                    ai_response = "Excellent choice. Let's find your next off-market acquisition portfolio. What is your preferred location or city? 📍"
-                                    save_supabase_message(from_number, "user", msg_body, tenant_id)
-                                    save_supabase_message(from_number, "assistant", "[PURPOSE:BUY] " + ai_response, tenant_id)
-                                    send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
-                                    return PlainTextResponse(content="OK", status_code=200)
-
-                                # =========================================================================================
-                                # 🏡 STATE-MACHINE INTERCEPTORS: RENT INTAKE FUNNEL
-                                # =========================================================================================
-                                elif msg_body in ["Rent Property 🏡", "Rent Par Leni"]:
-                                    session["purpose"] = "rent"
-                                    ai_response = "Let's find you the perfect rental. What is your preferred location or city? 📍"
-                                    save_supabase_message(from_number, "user", msg_body, tenant_id)
-                                    save_supabase_message(from_number, "assistant", "[PURPOSE:RENT] " + ai_response, tenant_id)
-                                    send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
-                                    return PlainTextResponse(content="OK", status_code=200)
-
                                 # =========================================================================================
                                 # ➕ MORE OPTIONS: Sell + Book Strategy (Overflow from 3-button limit)
                                 # =========================================================================================
-                                elif msg_body == "More Options ➕":
+                                if msg_body == "More Options ➕":
                                     send_whatsapp_buttons(
                                         tenant_id, from_number, "Here are more ways we can serve you 🏛️",
                                         ["Sell Property 💰", "Book Strategy 📅"],
