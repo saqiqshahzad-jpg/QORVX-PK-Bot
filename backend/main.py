@@ -1157,40 +1157,24 @@ async def process_whatsapp_data(data: dict):
                                     # 🔥 YEH HAI JADU! Chupa hua token humne is variable mein save kar liya
                                     btn_id = message["interactive"]["button_reply"]["id"].strip()
 
-                            # --- HANDLE AUDIO (VOICE NOTES) ---
-                            elif message.get("type") == "audio":
-                                audio_id = message["audio"]["id"]
-                                logger.info(f"🎙️ Audio message received. ID: {audio_id}")
+                            # --- HANDLE NON-TEXT MEDIA (DARK PSYCHOLOGY DEMO LOCK) ---
+                            elif message.get("type") not in ["text", "interactive"]:
+                                msg_type = message.get("type", "media")
+                                media_type_map = {
+                                    "image": "tasveer",
+                                    "document": "document",
+                                    "audio": "voice note",
+                                    "video": "video",
+                                    "sticker": "sticker"
+                                }
+                                media_name = media_type_map.get(msg_type, msg_type)
                                 
-                                audio_file_path = download_whatsapp_audio(audio_id, whatsapp_token)
-                                if audio_file_path:
-                                    try:
-                                        msg_body = transcribe_audio_groq(audio_file_path)
-                                        logger.info(f"🎙️ Groq Transcription Success: {msg_body}")
-                                    except Exception as e:
-                                        logger.error(f"🎙️ Groq Transcription Error: {e}")
-                                        reply_text = "Maazrat janab, internet connection ya background shor ki wajah se main aapki aawaz theek se sun nahi paya. Barah-e-karam apna paigham text mein likh kar bhej dein. 📝"
-                                        send_whatsapp_text(tenant_id, from_number, reply_text, whatsapp_token)
-                                        save_supabase_message(from_number, "user", "[Voice Note - Transcription Failed]", tenant_id)
-                                        save_supabase_message(from_number, "assistant", reply_text, tenant_id)
-                                        return PlainTextResponse(content="OK", status_code=200)
-                                    finally:
-                                        # Clean up temp file to save disk space
-                                        if audio_file_path and os.path.exists(audio_file_path):
-                                            os.remove(audio_file_path)
-                                else:
-                                    logger.error("Failed to download audio media from Meta.")
-                                    reply_text = "Maazrat janab, aapki voice note load nahi ho saki. Barah-e-karam dobara bhejein ya text mein likh dein. 📝"
-                                    send_whatsapp_text(tenant_id, from_number, reply_text, whatsapp_token)
-                                    save_supabase_message(from_number, "user", "[Voice Note - Download Failed]", tenant_id)
-                                    save_supabase_message(from_number, "assistant", reply_text, tenant_id)
-                                    return PlainTextResponse(content="OK", status_code=200)
-
-                            else:
-                                fallback_msg = "Sir, lagta hai network error ki wajah se main aapka message theek se samajh nahi paya. 😅 Hum aapki property search ki baat kar rahe thay—kya aap mujhe apna approximate budget confirm kar sakte hain taake hum aage barhein?"
-                                save_supabase_message(from_number, "user", f"[Media/Unsupported: {message.get('type')}]", tenant_id)
-                                save_supabase_message(from_number, "assistant", fallback_msg, tenant_id)
-                                send_whatsapp_text(tenant_id, from_number, fallback_msg, whatsapp_token)
+                                dark_psychology_msg = f"Arre wah, seedha {media_name}? Lekin ek choti si rukawat hai, yeh demo version hai, isliye live image-scanning ka feature abhi restricted rakha gaya hai taake server load na barhe.\n\nAsli version mein AI khud tasveer parh kar rate bata deta hai. Batayein, filhal text mein koi property search karni hai?"
+                                
+                                logger.info(f"🔒 Triggered Dark Psychology Demo Lock for type: {msg_type}")
+                                save_supabase_message(from_number, "user", f"[{msg_type.upper()} RECEIVED]", tenant_id)
+                                save_supabase_message(from_number, "assistant", dark_psychology_msg, tenant_id)
+                                send_whatsapp_text(tenant_id, from_number, dark_psychology_msg, whatsapp_token)
                                 return PlainTextResponse(content="OK", status_code=200)
 
                             if msg_body:
