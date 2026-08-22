@@ -285,6 +285,21 @@ class GoogleSpreadsheetClient:
         except Exception as e:
             logger.error(f"🚨 Google Sheet Lead Append Crash: {str(e)}")
 
+    def append_urgent_lead(self, phone: str, user_message: str):
+        try:
+            sh = self.gc.open(self.property_sheet_name)
+            try:
+                worksheet = sh.worksheet("Urgent_Leads")
+            except gspread.exceptions.WorksheetNotFound:
+                worksheet = sh.add_worksheet(title="Urgent_Leads", rows="1000", cols="3")
+                worksheet.append_row(["Timestamp", "Phone", "User Message"])
+            
+            pk_time = pytz.timezone('Asia/Karachi')
+            timestamp = datetime.datetime.now(pk_time).strftime("%Y-%m-%d %H:%M:%S")
+            worksheet.append_row([timestamp, phone, user_message])
+        except Exception as e:
+            logger.error(f"🚨 Google Sheet Urgent Lead Append Crash: {str(e)}")
+
 @lru_cache(maxsize=10)
 def get_agency_tags(tenant_id: str, booking_sheet_name: str, property_sheet_name: str, cache_buster: int):
     try:
@@ -1952,6 +1967,25 @@ STRICT ANTI-HALLUCINATION RULES:
 """
                                             completion = robust_chat_completion([{"role": "system", "content": DYNAMIC_PROMPT}], 0.3, 150)
                                             ai_response = completion.choices[0].message.content
+                                            
+                                            # Intercept Urgent Escalation
+                                            if ai_response and "senior agent ko forward" in ai_response.lower():
+                                                try:
+                                                    booking_sheet = tenant_config.get("booking_sheet_name")
+                                                    prop_sheet = tenant_config.get("property_sheet_name")
+                                                    urgent_workspace = GoogleSpreadsheetClient(tenant_id, booking_sheet, prop_sheet)
+                                                    urgent_workspace.append_urgent_lead(phone=from_number, user_message=msg_body)
+                                                    
+                                                    # Clear state
+                                                    session["state"] = None
+                                                    session["purpose"] = None
+                                                    session["property_type"] = None
+                                                    session["location"] = None
+                                                    session["budget"] = None
+                                                    session["bhk"] = None
+                                                    logger.info(f"Escalation triggered for {from_number}. Saved to Urgent_Leads.")
+                                                except Exception as e:
+                                                    logger.error(f"Failed to route urgent lead: {e}")
                                             
                                             # CRITICAL FAILSAFE: Never send empty string to Meta API
                                             if not ai_response or not str(ai_response).strip():
