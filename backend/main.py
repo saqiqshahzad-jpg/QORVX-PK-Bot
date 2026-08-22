@@ -130,7 +130,7 @@ def robust_chat_completion(messages_array, temperature, max_tokens):
         return client.chat.completions.create(
             model=MODEL_ID,
             temperature=temperature,
-            max_tokens=max_tokens,
+            max_tokens=512,
             messages=messages_array
         )
     except Exception as e:
@@ -139,7 +139,7 @@ def robust_chat_completion(messages_array, temperature, max_tokens):
             return client.chat.completions.create(
                 model=FALLBACK_MODEL,
                 temperature=temperature,
-                max_tokens=max_tokens,
+                max_tokens=512,
                 messages=messages_array
             )
         except Exception as e2:
@@ -1286,7 +1286,8 @@ Action: Greet them back politely. Acknowledge their past interest naturally. Ask
                                     completion = client.chat.completions.create(
                                         model=MODEL_ID,
                                         messages=[{"role": "system", "content": RETURNING_PROMPT}],
-                                        temperature=0.3
+                                        temperature=0.3,
+                                        max_tokens=512
                                     )
                                     ai_response = completion.choices[0].message.content
                                     send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
@@ -1635,7 +1636,8 @@ Action: Greet them back politely. Acknowledge their past interest naturally. Ask
                                                 model=MODEL_ID, 
                                                 messages=[{"role": "user", "content": EXTRACT_PROMPT}],
                                                 response_format={"type": "json_object"},
-                                                temperature=0.1
+                                                temperature=0.1,
+                                                max_tokens=512
                                             )
                                             import json
                                             extracted_data = json.loads(completion.choices[0].message.content)
