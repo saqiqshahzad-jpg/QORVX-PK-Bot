@@ -1874,6 +1874,10 @@ STRICT RULES FOR YOUR RESPONSE:
                                                 # Step 3: Dispatch Multi-Media Sequence (All Images + Video)
                                                 send_property_media_sequence(from_number, prop, tenant_id, whatsapp_token)
                                                 
+                                                # Add delay to allow Meta servers to process and deliver media before sending lightweight buttons
+                                                import time
+                                                time.sleep(4)
+                                                
                                                 # Step 4: Interactive Action Buttons
                                                 outro_msg = "Kya aap is property ka visit schedule karna chahte hain? 🤝"
                                                 send_whatsapp_quick_reply_buttons(from_number, outro_msg, tenant_id, whatsapp_token)
