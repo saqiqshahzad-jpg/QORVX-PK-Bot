@@ -1156,9 +1156,24 @@ async def process_whatsapp_data(data: dict):
                                 if session is None:
                                     logger.info("New user detected. Sending Menu.")
                                     session = {"purpose": None, "bhk": None, "location": None, "budget": None, "agency_tag": None, "state": None, "intent": None, "greeting_done": True, "chat_history": []}
+                                    
+                                    # --- EXTRACT AGENCY TAG FROM INITIAL MESSAGE ---
+                                    cache_buster = int(time.time() // 300)
+                                    unique_tags = get_agency_tags(tenant_id, tenant_config.get("booking_sheet_name"), tenant_config.get("property_sheet_name"), cache_buster)
+                                    for tag in unique_tags:
+                                        clean_tag = tag.strip().lower()
+                                        if clean_tag and (clean_tag in msg_clean or clean_tag.replace("_", " ") in msg_clean):
+                                            session["agency_tag"] = tag.strip()
+                                            logger.info(f"Dynamically locked agency_tag on first message: {session['agency_tag']}")
+                                            break
+                                            
                                     active_sessions.append((from_number, session, tenant_id))
                                     
-                                    agency_name = str(tenant_config.get("agency_tag", "Real Estate Agency")).replace("_", " ").title()
+                                    if session.get("agency_tag"):
+                                        agency_name = str(session["agency_tag"]).replace("_", " ").title()
+                                    else:
+                                        agency_name = str(tenant_config.get("agency_tag", "Real Estate Agency")).replace("_", " ").title()
+                                        
                                     send_whatsapp_text(tenant_id, from_number, f"Walaikum Assalam! {agency_name} mein khush-amdeed. ✨", whatsapp_token)
                                     send_menu_buttons(from_number, tenant_id, whatsapp_token)
                                     return PlainTextResponse(content="OK", status_code=200)
