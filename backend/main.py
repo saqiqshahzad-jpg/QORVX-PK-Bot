@@ -1157,13 +1157,41 @@ async def process_whatsapp_data(data: dict):
                                     # 🔥 YEH HAI JADU! Chupa hua token humne is variable mein save kar liya
                                     btn_id = message["interactive"]["button_reply"]["id"].strip()
 
+                            # --- HANDLE AUDIO (VOICE NOTES) ---
+                            elif message.get("type") == "audio":
+                                audio_id = message["audio"]["id"]
+                                logger.info(f"🎙️ Audio message received. ID: {audio_id}")
+                                
+                                audio_file_path = download_whatsapp_audio(audio_id, whatsapp_token)
+                                if audio_file_path:
+                                    try:
+                                        msg_body = transcribe_audio_groq(audio_file_path)
+                                        logger.info(f"🎙️ Groq Transcription Success: {msg_body}")
+                                    except Exception as e:
+                                        logger.error(f"🎙️ Groq Transcription Error: {e}")
+                                        reply_text = "Maazrat janab, internet connection ya background shor ki wajah se main aapki aawaz theek se sun nahi paya. Barah-e-karam apna paigham text mein likh kar bhej dein. 📝"
+                                        send_whatsapp_text(tenant_id, from_number, reply_text, whatsapp_token)
+                                        save_supabase_message(from_number, "user", "[Voice Note - Transcription Failed]", tenant_id)
+                                        save_supabase_message(from_number, "assistant", reply_text, tenant_id)
+                                        return PlainTextResponse(content="OK", status_code=200)
+                                    finally:
+                                        # Clean up temp file to save disk space
+                                        if audio_file_path and os.path.exists(audio_file_path):
+                                            os.remove(audio_file_path)
+                                else:
+                                    logger.error("Failed to download audio media from Meta.")
+                                    reply_text = "Maazrat janab, aapki voice note load nahi ho saki. Barah-e-karam dobara bhejein ya text mein likh dein. 📝"
+                                    send_whatsapp_text(tenant_id, from_number, reply_text, whatsapp_token)
+                                    save_supabase_message(from_number, "user", "[Voice Note - Download Failed]", tenant_id)
+                                    save_supabase_message(from_number, "assistant", reply_text, tenant_id)
+                                    return PlainTextResponse(content="OK", status_code=200)
+
                             # --- HANDLE NON-TEXT MEDIA (DARK PSYCHOLOGY DEMO LOCK) ---
                             elif message.get("type") not in ["text", "interactive"]:
                                 msg_type = message.get("type", "media")
                                 media_type_map = {
                                     "image": "tasveer",
                                     "document": "document",
-                                    "audio": "voice note",
                                     "video": "video",
                                     "sticker": "sticker"
                                 }
