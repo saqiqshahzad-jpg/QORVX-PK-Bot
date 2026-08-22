@@ -1252,6 +1252,15 @@ async def process_whatsapp_data(data: dict):
                                         save_supabase_message(from_number, "assistant", ai_response, tenant_id)
                                         return PlainTextResponse(content="OK", status_code=200)
 
+                                    elif button_id == "intent_sell":
+                                        session["purpose"] = "sell"
+                                        session["state"] = "ASKING_SELL_TYPE"
+                                        ai_response = "Zabardast janab! 🤝 Aap kya bechna chahte hain? (Misaal ke taur par: Ghar, Flat, Plot, ya Commercial) 🏡"
+                                        send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
+                                        save_supabase_message(from_number, "user", "Clicked Sell Property", tenant_id)
+                                        save_supabase_message(from_number, "assistant", ai_response, tenant_id)
+                                        return PlainTextResponse(content="OK", status_code=200)
+
                                 # =========================================================================================
                                 # 🏠 STATE-MACHINE INTERCEPTORS: BUYER INTAKE FUNNEL
                                 # =========================================================================================
@@ -1513,6 +1522,78 @@ async def process_whatsapp_data(data: dict):
                                 else:
                                     detected = detect_market(msg_body, db_history)
                                     
+                                    # --- SELLER PIPELINE ---
+                                    if session.get("state") == "ASKING_SELL_TYPE":
+                                        p_type = msg_body.lower()
+                                        session["sell_property_type"] = msg_body.strip()
+                                        session["state"] = "COLLECTING_SELLER_DETAILS"
+                                        
+                                        # Tailor the one-shot question based on property type
+                                        if any(word in p_type for word in ["flat", "ghar", "house", "bangla", "apartment"]):
+                                            ai_response = "Behtareen! Janab, agent ko achi deal nikalne ke liye bas ek hi message mein yeh details bhej dein:\n\n📍 Location / Society\n📏 Size (Marla/Sq Yd)\n🛏️ Rooms & Bathrooms\n💰 Demand (Price)\n👤 Aapka Pura Naam"
+                                        else:
+                                            # Plots/Commercial don't need beds/baths
+                                            ai_response = "Behtareen! Janab, agent ko achi deal nikalne ke liye bas ek hi message mein yeh details bhej dein:\n\n📍 Location / Society\n📏 Size (Marla/Sq Yd)\n💰 Demand (Price)\n👤 Aapka Pura Naam"
+                                            
+                                        send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
+                                        save_supabase_message(from_number, "user", msg_body, tenant_id)
+                                        save_supabase_message(from_number, "assistant", ai_response, tenant_id)
+                                        return PlainTextResponse(content="OK", status_code=200)
+
+                                    elif session.get("state") == "COLLECTING_SELLER_DETAILS":
+                                        logger.info("Parsing seller details via LLM JSON mode.")
+                                        
+                                        EXTRACT_PROMPT = f"""
+                                        Extract the following real estate details from the user's message. 
+                                        User Message: "{msg_body}"
+                                        
+                                        Respond ONLY in strictly valid JSON format with these exact keys:
+                                        "Name" (str), "Location" (str), "Size" (str), "Features" (str - extract beds/baths if any, else "N/A"), "Demand" (str).
+                                        If a value is missing, output "N/A".
+                                        """
+                                        
+                                        extracted_data = {}
+                                        try:
+                                            completion = client.chat.completions.create(
+                                                model="llama3-70b-8192", 
+                                                messages=[{"role": "user", "content": EXTRACT_PROMPT}],
+                                                response_format={"type": "json_object"},
+                                                temperature=0.1
+                                            )
+                                            import json
+                                            extracted_data = json.loads(completion.choices[0].message.content)
+                                            
+                                            # --- GOOGLE SHEET APPEND LOGIC ---
+                                            import datetime
+                                            current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                            lead_row = [
+                                                str(current_time), 
+                                                str(from_number), 
+                                                str(extracted_data.get('Name', 'N/A')), 
+                                                str(session.get('sell_property_type', 'N/A')), 
+                                                str(extracted_data.get('Location', 'N/A')), 
+                                                str(extracted_data.get('Size', 'N/A')), 
+                                                str(extracted_data.get('Features', 'N/A')), 
+                                                str(extracted_data.get('Demand', 'N/A'))
+                                            ]
+                                            
+                                            workspace = GoogleSpreadsheetClient(tenant_id, booking_sheet_name, property_sheet_name)
+                                            sheet = workspace.gc.open(property_sheet_name).worksheet("Seller_Leads")
+                                            sheet.append_row(lead_row)
+                                            logger.info(f"Appended Seller Lead to Sheet: {extracted_data}")
+                                        except Exception as e:
+                                            logger.error(f"Failed to parse or append seller lead to sheet: {e}")
+
+                                        # Clear state and confirm
+                                        session["state"] = None
+                                        session["purpose"] = None
+                                        
+                                        confirm_msg = f"Shukriya {extracted_data.get('Name', 'janab')}! Aapki property ({session.get('sell_property_type', 'property')}) ki details hamare system mein save ho gayi hain. Hamara agent jald aapse rabta karega. 🤝✨"
+                                        send_whatsapp_text(tenant_id, from_number, confirm_msg, whatsapp_token)
+                                        save_supabase_message(from_number, "user", msg_body, tenant_id)
+                                        save_supabase_message(from_number, "assistant", confirm_msg, tenant_id)
+                                        return PlainTextResponse(content="OK", status_code=200)
+                                        
                                     # --- STATE 3: BOOKING VISIT (LEAD CAPTURE) ---
                                     if session.get("state") == "BOOKING_VISIT":
                                         import re
