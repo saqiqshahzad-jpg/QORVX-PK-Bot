@@ -47,6 +47,15 @@ PROCESSED_MSG_IDS = {}   # message_id -> timestamp, auto-cleaned after 5 min
 # 🚨 SECURE CONFIGURATION OVERLAY
 load_dotenv()
 
+from supabase import create_client, Client
+url: str = os.environ.get("SUPABASE_URL", "")
+key: str = os.environ.get("SUPABASE_KEY", "")
+# Allow it to run even if missing in dev environment
+if url and key:
+    supabase: Client = create_client(url, key)
+else:
+    supabase = None
+
 app = FastAPI()
 
 # =========================================================================================
@@ -211,6 +220,30 @@ def save_supabase_seller_listing(phone: str, name: str, email: str, location: st
         requests.post(url, headers=headers, json=payload, timeout=10)
     except Exception as e: 
         logger.error(f"🚨 Structured Seller Save Failure: {str(e)}")
+
+def get_user_session(phone_number: str, tenant_id: str):
+    if not supabase:
+        return None
+    try:
+        response = supabase.table('user_sessions').select('session_data').eq('phone_number', phone_number).eq('tenant_id', tenant_id).execute()
+        if response.data:
+            return response.data[0]['session_data']
+        return None
+    except Exception as e:
+        logger.error(f"🚨 Supabase session fetch error: {str(e)}")
+    return None
+
+def update_user_session(phone_number: str, session_data: dict, tenant_id: str):
+    if not supabase:
+        return
+    try:
+        supabase.table('user_sessions').upsert({
+            'phone_number': phone_number,
+            'tenant_id': tenant_id,
+            'session_data': session_data
+        }).execute()
+    except Exception as e:
+        logger.error(f"🚨 Supabase session upsert error: {str(e)}")
 
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
@@ -622,6 +655,31 @@ def send_whatsapp_buttons(tenant_id: str, to_number: str, body_text: str, button
     except Exception as e: 
         logger.error(f"🚨 [SEND BUTTONS CRASH] To: {to_number} | Error: {str(e)}")
 
+def send_menu_buttons(to_number: str, tenant_id: str, whatsapp_token: str):
+    url = f"https://graph.facebook.com/v25.0/{tenant_id}/messages"
+    headers = {"Authorization": f"Bearer {whatsapp_token}", "Content-Type": "application/json"}
+    payload = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": to_number,
+        "type": "interactive",
+        "interactive": {
+            "type": "button",
+            "body": {"text": "Chaliye shuru karte hain! Aap ki kya requirement hai? 👇"},
+            "action": {
+                "buttons": [
+                    {"type": "reply", "reply": {"id": "intent_buy", "title": "Buy Property 🏠"}},
+                    {"type": "reply", "reply": {"id": "intent_rent", "title": "Rent Property 🏡"}},
+                    {"type": "reply", "reply": {"id": "intent_sell", "title": "Property Bechni Hai 💰"}}
+                ]
+            }
+        }
+    }
+    try: 
+        requests.post(url, headers=headers, json=payload, timeout=10)
+    except Exception as e: 
+        logger.error(f"🚨 [SEND MENU CRASH]: {str(e)}")
+
 def send_property_button(tenant_id: str, to_number: str, body_text: str, prop_id: str, whatsapp_token: str):
     url = f"https://graph.facebook.com/v25.0/{tenant_id}/messages"
     headers = {"Authorization": f"Bearer {whatsapp_token}", "Content-Type": "application/json"}
@@ -816,22 +874,8 @@ def format_pkr_currency(value):
 # 🧠 SESSION STATE ENGINE (ANTI-AMNESIA CORE)
 # ═══════════════════════════════════════════════════════════════
 
-def get_session(phone: str, tenant_id: str) -> dict:
-    """Get or create a session for this user."""
-    key = f"{tenant_id}:{phone}"
-    if key not in USER_SESSIONS:
-        USER_SESSIONS[key] = {
-            "purpose": None, "bhk": None, "location": None, "budget": None, "agency_tag": None
-        }
-    return USER_SESSIONS[key]
-
-def extract_and_update_session(msg_body: str, phone: str, chat_history: list, tenant_id: str, tenant_config: dict) -> dict:
-    """Updates global session with extracted variables."""
-    session_id = f"{tenant_id}:{phone}"
-    if session_id not in USER_SESSIONS:
-        USER_SESSIONS[session_id] = {}
-    session = USER_SESSIONS[session_id]
-    
+def extract_and_update_session(session: dict, msg_body: str, chat_history: list, tenant_id: str, tenant_config: dict) -> dict:
+    """Updates the passed session dictionary with extracted variables."""
     msg_lower = msg_body.lower().strip()
 
     # ── AGENCY TAG detection (Dynamic) ──
@@ -1006,6 +1050,7 @@ async def receive_whatsapp_message(request: Request, background_tasks: Backgroun
 
 async def process_whatsapp_data(data: dict):
     print(f"🚀 [BACKGROUND TASK] process_whatsapp_data started", flush=True)
+    active_sessions = []
     try:
         if data.get("object") and data.get("entry"):
             for entry in data["entry"]:
@@ -1104,7 +1149,58 @@ async def process_whatsapp_data(data: dict):
                                 last_ai_msg = db_history[-1]["content"] if db_history else ""
                                 
                                 msg_clean = msg_body.lower().strip()
-                                session = get_session(from_number, tenant_id)
+                                
+                                # --- INTELLIGENT ROUTER & SUPABASE PERSISTENCE ---
+                                session = get_user_session(from_number, tenant_id)
+                                
+                                if session is None:
+                                    logger.info("New user detected. Sending Menu.")
+                                    session = {"purpose": None, "bhk": None, "location": None, "budget": None, "agency_tag": None, "state": None, "intent": None, "greeting_done": True, "chat_history": []}
+                                    active_sessions.append((from_number, session, tenant_id))
+                                    
+                                    agency_name = str(tenant_config.get("agency_tag", "Real Estate Agency")).replace("_", " ").title()
+                                    send_whatsapp_text(tenant_id, from_number, f"Walaikum Assalam! {agency_name} mein khush-amdeed. ✨", whatsapp_token)
+                                    send_menu_buttons(from_number, tenant_id, whatsapp_token)
+                                    return PlainTextResponse(content="OK", status_code=200)
+
+                                # Register session for auto-save in finally block
+                                active_sessions.append((from_number, session, tenant_id))
+
+                                if msg_clean == "menu":
+                                    logger.info("User requested menu. Clearing context.")
+                                    if "archived_intents" not in session:
+                                        session["archived_intents"] = []
+                                    if session.get("purpose") or session.get("property_type"):
+                                        session["archived_intents"].append({
+                                            "property_type": session.get("property_type"),
+                                            "budget": session.get("budget"),
+                                            "bhk": session.get("bhk"),
+                                            "location": session.get("location"),
+                                            "purpose": session.get("purpose")
+                                        })
+                                    session["state"] = None
+                                    session["intent"] = None
+                                    session["purpose"] = None
+                                    session["active_property"] = None
+                                    send_menu_buttons(from_number, tenant_id, whatsapp_token)
+                                    return PlainTextResponse(content="OK", status_code=200)
+                                    
+                                is_greeting = any(word in msg_clean for word in ["salam", "hello", "hi", "assalam", "hy"])
+                                if is_greeting and session.get("purpose"):
+                                    logger.info("Returning user greeted. Sending contextual prompt.")
+                                    RETURNING_PROMPT = f"""User is returning. Past context: {session}.
+User message: "{msg_body}"
+Action: Greet them back politely. Acknowledge their past interest naturally. Ask if they want to continue with that or see the 'Menu' for other options. Keep it short and professional in Roman Urdu."""
+                                    completion = client.chat.completions.create(
+                                        model="llama3-70b-8192",
+                                        messages=[{"role": "system", "content": RETURNING_PROMPT}],
+                                        temperature=0.3
+                                    )
+                                    ai_response = completion.choices[0].message.content
+                                    send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
+                                    save_supabase_message(from_number, "user", msg_body, tenant_id)
+                                    save_supabase_message(from_number, "assistant", ai_response, tenant_id)
+                                    return PlainTextResponse(content="OK", status_code=200)
 
                                 # Initialize chat history if empty
                                 if "chat_history" not in session:
@@ -1128,6 +1224,15 @@ async def process_whatsapp_data(data: dict):
                                 # If the user changed their mind about the property type mid-conversation
                                 if new_prop_type and current_prop_type and new_prop_type != current_prop_type:
                                     logger.info(f"Intent Shift: {current_prop_type} -> {new_prop_type}. Wiping conflicting session data.")
+                                    if "archived_intents" not in session:
+                                        session["archived_intents"] = []
+                                    session["archived_intents"].append({
+                                        "property_type": current_prop_type,
+                                        "budget": session.get("budget"),
+                                        "bhk": session.get("bhk"),
+                                        "location": session.get("location"),
+                                        "purpose": session.get("purpose")
+                                    })
                                     session["property_type"] = new_prop_type
                                     session["budget"] = None  # New property means new budget needed
                                     session["bhk"] = None
@@ -1160,57 +1265,8 @@ async def process_whatsapp_data(data: dict):
 
                                 # ═══ SESSION STATE: Extract & persist parameters ═══
                                 # ── Update Core Session Context ──
-                                session = extract_and_update_session(msg_body, from_number, db_history, tenant_id, tenant_config)
+                                session = extract_and_update_session(session, msg_body, db_history, tenant_id, tenant_config)
                                 logger.info(f"🧠 [SESSION] {from_number}: bhk={session.get('bhk')} loc={session.get('location')} purpose={session.get('purpose')} budget={session.get('budget')} market={session.get('market')}")
-
-                                # --- NEW HARD RESET & GREETING BLOCK ---
-                                msg_lower = msg_body.lower()
-                                is_greeting = any(word in msg_lower for word in ["salam", "assalam", "hello", "hi", "hey"])
-                                is_new_inquiry = "properties dekhni hain" in msg_lower or "property dekhni hai" in msg_lower
-                                
-                                if is_greeting or is_new_inquiry:
-                                    logger.info("New conversation trigger detected. Performing Hard Session Reset.")
-                                    
-                                    # Clear all previous funnel filters and states
-                                    session["purpose"] = None
-                                    session["property_type"] = None
-                                    session["location"] = None
-                                    session["bhk"] = None
-                                    session["budget"] = None
-                                    session["state"] = None
-                                    session["active_property"] = None
-                                    session["seen_properties"] = []  # Reset pagination for fresh conversation
-                                    session["greeting_done"] = True  # Mark greeting as done for this new loop
-                                    
-                                    # Generate Dynamic Agency Greeting
-                                    raw_agency_tag = session.get("agency_tag", "Hamari Agency")
-                                    agency_name = str(raw_agency_tag).replace("_", " ").title()
-                                    
-                                    # Check if user exists in Leads sheet
-                                    known_name = None
-                                    try:
-                                        workspace = GoogleSpreadsheetClient(tenant_id, tenant_config.get("booking_sheet_name"), tenant_config.get("property_sheet_name"))
-                                        leads_sheet = workspace.gc.open(tenant_config.get("property_sheet_name")).worksheet("Leads")
-                                        # Find cell matching the phone number
-                                        cell = leads_sheet.find(str(from_number))
-                                        if cell:
-                                            # Name is in Column C (index 3) of the matched row
-                                            known_name = leads_sheet.cell(cell.row, 3).value
-                                    except Exception as e:
-                                        logger.warning(f"Could not check Leads sheet for returning user: {e}")
-
-                                    if known_name and known_name != "Client":
-                                        greeting_text = f"Walaikum Assalam {known_name} janab! {agency_name} mein wapis aane ka shukriya. ✨\n\nKahiye, aaj main aapki kya madad kar sakta hoon? 🏡"
-                                    else:
-                                        greeting_text = f"Walaikum Assalam! {agency_name} mein khush-amdeed. ✨\n\nJanab, aap property kharidna chahte hain ya rent par lena chahte hain? 🏡"
-                                        
-                                    send_whatsapp_text(tenant_id, from_number, greeting_text, whatsapp_token)
-                                    save_supabase_message(from_number, "user", msg_body, tenant_id)
-                                    save_supabase_message(from_number, "assistant", greeting_text, tenant_id)
-                                    
-                                    # Append to history
-                                    session["chat_history"].append({"role": "assistant", "content": greeting_text})
-                                    return PlainTextResponse(content="OK", status_code=200)
 
                                 # Parse interactive button clicks
                                 interactive_type = message.get("interactive", {}).get("type")
@@ -1884,3 +1940,10 @@ CORE TRAINING FOR CONVERSATION & INTENT SHIFTS:
         print(f"🚨 [BACKGROUND TASK ERROR] {str(e)}", flush=True)
         logger.exception(f"🚨 Webhook Parse Crash: {str(e)}")
         return PlainTextResponse(content="OK", status_code=200)
+    finally:
+        for phone, session_data, tenant in active_sessions:
+            try:
+                if session_data is not None:
+                    update_user_session(phone, session_data, tenant)
+            except Exception as e:
+                logger.error(f"🚨 Failed to save session in finally block: {str(e)}")
