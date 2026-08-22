@@ -300,6 +300,31 @@ class GoogleSpreadsheetClient:
         except Exception as e:
             logger.error(f"🚨 Google Sheet Urgent Lead Append Crash: {str(e)}")
 
+AGENCY_PROFILES_CACHE = {}
+
+def get_agency_profile(agency_tag: str, tenant_id: str, property_sheet_name: str) -> dict:
+    if not agency_tag:
+        return {}
+    if agency_tag in AGENCY_PROFILES_CACHE:
+        return AGENCY_PROFILES_CACHE[agency_tag]
+    try:
+        workspace = GoogleSpreadsheetClient(tenant_id, "BookingSlot", property_sheet_name)
+        sh = workspace.gc.open(workspace.property_sheet_name)
+        try:
+            worksheet = sh.worksheet("Agency_Profiles")
+        except Exception:
+            AGENCY_PROFILES_CACHE[agency_tag] = {}
+            return {}
+        records = worksheet.get_all_records()
+        for row in records:
+            if str(row.get("Agency_Tag", "")).strip() == agency_tag:
+                AGENCY_PROFILES_CACHE[agency_tag] = row
+                return row
+    except Exception as e:
+        logger.error(f"🚨 Failed to fetch Agency_Profiles: {e}")
+    AGENCY_PROFILES_CACHE[agency_tag] = {}
+    return {}
+
 @lru_cache(maxsize=10)
 def get_agency_tags(tenant_id: str, booking_sheet_name: str, property_sheet_name: str, cache_buster: int):
     try:
@@ -1925,8 +1950,12 @@ STRICT RULES FOR YOUR RESPONSE:
                                         if session.get("state") != "INSPECTING_PROPERTY":
                                             logger.info(f"Funnel Incomplete. Using Dynamic LLM Qualification Prompt.")
                                             
-                                            raw_agency_tag = session.get("agency_tag", "Hamari Agency")
+                                            raw_agency_tag = session.get("agency_tag") or tenant_config.get("agency_tag", "Real Estate Agency")
                                             agency_name = str(raw_agency_tag).replace("_", " ").title()
+                                            
+                                            # Fetch dynamic profile
+                                            prop_sheet = tenant_config.get("property_sheet_name")
+                                            agency_profile = get_agency_profile(raw_agency_tag, tenant_id, prop_sheet)
                                             
                                             # Prepare real-time session snapshot for the AI
                                             current_state = f"""
@@ -1964,6 +1993,13 @@ STRICT ANTI-HALLUCINATION RULES:
 16. AGENT ESCALATION: CRITICAL: If the user explicitly asks to speak to an agent, a human, asks for a phone call, or seems highly frustrated (e.g., 'agent', 'call', 'insaan', 'baat karni hai'), YOU MUST IMMEDIATELY STOP ASKING ABOUT PROPERTIES. Respond EXACTLY with this empathetic Roman Urdu message: 'Janab, main ne aap ki request apne senior agent ko forward kar di hai. Wo thori dair mein aap se direct rabta kar lenge. Tab tak, barah-e-karam apna sawal ya masla yahan likh dein taake main unhe update kar sakun. 📞🤝' Set all property parameters to null and do not attempt to sell or search for properties in this specific response.
 17. FULL CATALOG / PDF REQUESTS: If the user asks for a complete list, catalog, or PDF of all properties (e.g., "saari properties", "list bhej do", "pdf"), DO NOT attempt to list multiple properties. Respond EXACTLY with: 'Janab, hamare paas inventory rozana update hoti rehti hai. Aap bas apni pasandida location aur budget batayein, main best options yahan screen par dikha deta hoon! 😊'
 """
+                                            if agency_profile:
+                                                address = agency_profile.get("Address", "N/A")
+                                                phone = agency_profile.get("Phone", "N/A")
+                                                email = agency_profile.get("Email", "N/A")
+                                                about_us = agency_profile.get("About_Us", "N/A")
+                                                DYNAMIC_PROMPT += f"\nCRITICAL CONTEXT: You are currently representing the agency '{agency_name}'. If the user asks about our office, owner, or contact info, use ONLY these details: Address: {address}, Phone: {phone}, Email: {email}. About us: {about_us}."
+
                                             completion = robust_chat_completion([{"role": "system", "content": DYNAMIC_PROMPT}], 0.3, 150)
                                             ai_response = completion.choices[0].message.content
                                             
