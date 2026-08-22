@@ -1284,7 +1284,7 @@ async def process_whatsapp_data(data: dict):
 User message: "{msg_body}"
 Action: Greet them back politely. Acknowledge their past interest naturally. Ask if they want to continue with that or see the 'Menu' for other options. Keep it short and professional in Roman Urdu."""
                                     completion = client.chat.completions.create(
-                                        model="llama3-70b-8192",
+                                        model=MODEL_ID,
                                         messages=[{"role": "system", "content": RETURNING_PROMPT}],
                                         temperature=0.3
                                     )
@@ -1632,7 +1632,7 @@ Action: Greet them back politely. Acknowledge their past interest naturally. Ask
                                         extracted_data = {}
                                         try:
                                             completion = client.chat.completions.create(
-                                                model="llama3-70b-8192", 
+                                                model=MODEL_ID, 
                                                 messages=[{"role": "user", "content": EXTRACT_PROMPT}],
                                                 response_format={"type": "json_object"},
                                                 temperature=0.1
