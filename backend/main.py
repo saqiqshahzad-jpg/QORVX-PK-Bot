@@ -100,9 +100,18 @@ def transcribe_audio_groq(file_path: str):
             transcription = client.audio.transcriptions.create(
                 file=(file_path, file.read()),
                 model="whisper-large-v3",
-                response_format="text"
+                response_format="json"
             )
-        return transcription.text
+        
+        # Bulletproof extraction logic
+        if isinstance(transcription, str):
+            msg_body = transcription
+        elif isinstance(transcription, dict):
+            msg_body = transcription.get("text", "")
+        else:
+            msg_body = getattr(transcription, "text", str(transcription))
+            
+        return msg_body.strip()
     except Exception as e:
         logger.error(f"Groq Whisper Error: {e}")
         raise e
