@@ -1056,6 +1056,7 @@ Your main objective is to collect these exactly 4 details before searching the d
 
 Strict Rules:
 - Until ALL 4 details are collected, politely ask ONLY for the missing details (AFTER the user has stated intent).
+- CRITICAL NORMALIZATION RULE: When parsing the budget, ALWAYS convert textual currency ("50 lakh", "1.5 crore", "50k") into pure integers (e.g., 5000000, 15000000, 50000). Never output strings for budget.
 - When ALL 4 variables are collected, YOU MUST OUTPUT EXACTLY THIS JSON FORMAT ON A NEW LINE:
 [PROPERTY_SEARCH: {{"bhk":<int>,"budget":<int>,"location":"<str>","purpose":"buy"|"rent"}}]
 """
@@ -1677,8 +1678,13 @@ Action: Greet them back politely. Acknowledge their past interest naturally. Ask
                                         User Message: "{msg_body}"
                                         
                                         Respond ONLY in strictly valid JSON format with these exact keys:
-                                        "Name" (str), "Location" (str), "Size" (str), "Features" (str - extract beds/baths if any, else "N/A"), "Demand" (str).
-                                        If a value is missing, output "N/A".
+                                        "Name" (str), "Location" (str), "Size" (str), "Features" (str - extract beds/baths if any, else "N/A"), "Demand" (int).
+                                        
+                                        CRITICAL NUMBER NORMALIZATION RULE:
+                                        - Demand (Budget/Price): ALWAYS convert to a pure integer. (e.g., "50 lakh" -> 5000000, "1.5 crore" -> 15000000, "50k" -> 50000). Never output strings like "50 Lakh".
+                                        - Size: Format clearly with the unit (e.g., "1 Kanal", "20 Marla").
+                                        
+                                        If a value is missing, output "N/A" (or 0 for integers).
                                         """
                                         
                                         extracted_data = {}
