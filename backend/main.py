@@ -475,7 +475,6 @@ def query_property_database(listing_type: str, bhk: int, city_society: str, budg
 # 📲 DYNAMIC TENANT WHATSAPP ROUTING
 # =========================================================================================
 def send_property_media_sequence(to_number: str, prop: dict, tenant_id: str, access_token: str):
-    import time
     
     # 1. Collect all valid Image URLs
     image_keys = [k for k in prop.keys() if "image" in str(k).lower()]
@@ -1890,7 +1889,6 @@ STRICT RULES FOR YOUR RESPONSE:
                                                 send_property_media_sequence(from_number, prop, tenant_id, whatsapp_token)
                                                 
                                                 # Add delay to allow Meta servers to process and deliver media before sending lightweight buttons
-                                                import time
                                                 time.sleep(4)
                                                 
                                                 # Step 4: Interactive Action Buttons
