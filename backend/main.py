@@ -1158,14 +1158,21 @@ async def process_whatsapp_data(data: dict):
                                     session = {"purpose": None, "bhk": None, "location": None, "budget": None, "agency_tag": None, "state": None, "intent": None, "greeting_done": True, "chat_history": []}
                                     
                                     # --- EXTRACT AGENCY TAG FROM INITIAL MESSAGE ---
-                                    cache_buster = int(time.time() // 300)
-                                    unique_tags = get_agency_tags(tenant_id, tenant_config.get("booking_sheet_name"), tenant_config.get("property_sheet_name"), cache_buster)
-                                    for tag in unique_tags:
-                                        clean_tag = tag.strip().lower()
-                                        if clean_tag and (clean_tag in msg_clean or clean_tag.replace("_", " ") in msg_clean):
-                                            session["agency_tag"] = tag.strip()
-                                            logger.info(f"Dynamically locked agency_tag on first message: {session['agency_tag']}")
-                                            break
+                                    # Pattern: "mujhe [Agency_Name] ki properties"
+                                    import re
+                                    match = re.search(r"mujhe\s+(.+?)\s+ki properties", msg_body, re.IGNORECASE)
+                                    if match:
+                                        session["agency_tag"] = match.group(1).strip()
+                                        logger.info(f"Extracted agency_tag from regex: {session['agency_tag']}")
+                                    else:
+                                        cache_buster = int(time.time() // 300)
+                                        unique_tags = get_agency_tags(tenant_id, tenant_config.get("booking_sheet_name"), tenant_config.get("property_sheet_name"), cache_buster)
+                                        for tag in unique_tags:
+                                            clean_tag = tag.strip().lower()
+                                            if clean_tag and (clean_tag in msg_clean or clean_tag.replace("_", " ") in msg_clean):
+                                                session["agency_tag"] = tag.strip()
+                                                logger.info(f"Dynamically locked agency_tag on first message: {session['agency_tag']}")
+                                                break
                                             
                                     active_sessions.append((from_number, session, tenant_id))
                                     
@@ -1173,6 +1180,7 @@ async def process_whatsapp_data(data: dict):
                                         agency_name = str(session["agency_tag"]).replace("_", " ").title()
                                     else:
                                         agency_name = str(tenant_config.get("agency_tag", "Real Estate Agency")).replace("_", " ").title()
+
                                         
                                     send_whatsapp_text(tenant_id, from_number, f"Walaikum Assalam! {agency_name} mein khush-amdeed. ✨", whatsapp_token)
                                     send_menu_buttons(from_number, tenant_id, whatsapp_token)
