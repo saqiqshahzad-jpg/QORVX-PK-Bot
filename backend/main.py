@@ -1868,9 +1868,13 @@ STRICT RULES FOR YOUR RESPONSE:
                                                 # Send the property summary FIRST as text
                                                 send_whatsapp_text(tenant_id, from_number, prop_msg, whatsapp_token)
                                                 
-                                                # Dispatch Multi-Media Sequence (All Images + Video)
+                                                # Step 2: Pre-Media Notification Text
+                                                send_whatsapp_text(tenant_id, from_number, "Janab, main is property ki kuch tasaveer bhej raha hoon, barah-e-karam thora intezar farmayen... 📸", whatsapp_token)
+                                                
+                                                # Step 3: Dispatch Multi-Media Sequence (All Images + Video)
                                                 send_property_media_sequence(from_number, prop, tenant_id, whatsapp_token)
                                                 
+                                                # Step 4: Interactive Action Buttons
                                                 outro_msg = "Kya aap is property ka visit schedule karna chahte hain? 🤝"
                                                 send_whatsapp_quick_reply_buttons(from_number, outro_msg, tenant_id, whatsapp_token)
                                                 full_ai_text += outro_msg
