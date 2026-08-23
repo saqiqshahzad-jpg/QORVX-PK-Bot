@@ -1223,6 +1223,36 @@ async def process_whatsapp_data(data: dict):
                                 # --- INTELLIGENT ROUTER & SUPABASE PERSISTENCE ---
                                 # session is already fetched above for DEDUP check
 
+                                if session is not None and session.get("funnel_state") == "AWAITING_VISIT_INFO":
+                                    logger.info(f"Received visit info from {from_number}: {msg_body}")
+                                    try:
+                                        workspace = GoogleSpreadsheetClient(tenant_id, booking_sheet_name, property_sheet_name)
+                                        sheet = workspace.gc.open(booking_sheet_name).sheet1
+                                        
+                                        date_str = datetime.datetime.now(pytz.timezone("Asia/Karachi")).strftime("%Y-%m-%d %H:%M:%S")
+                                        active_prop = str(session.get("active_property", ""))
+                                        agency_tag = session.get("agency_tag", "")
+                                        
+                                        sheet.append_row([date_str, msg_body, active_prop, agency_tag, from_number])
+                                    except Exception as e:
+                                        logger.error(f"Failed to save visit info to sheet: {e}")
+                                        
+                                    session["funnel_state"] = "COMPLETED"
+                                    session["last_interaction"] = time.time()
+                                    active_sessions.append((from_number, session, tenant_id))
+                                    
+                                    reply_text = "Bohot shukriya! Aap ki details aur visit request hamare paas save ho gayi hai. Hamara agent jald aap se confirm karne ke liye rabta karega. 🤝"
+                                    send_whatsapp_text(tenant_id, from_number, reply_text, whatsapp_token)
+                                    save_supabase_message(from_number, "user", msg_body, tenant_id)
+                                    save_supabase_message(from_number, "assistant", reply_text, tenant_id)
+                                    return PlainTextResponse(content="OK", status_code=200)
+
+                                time_since_last = 0
+                                if session is not None:
+                                    last_interaction = session.get("last_interaction", 0)
+                                    time_since_last = time.time() - last_interaction
+                                    session["last_interaction"] = time.time()
+
                                 if session is None:
                                     logger.info("New user detected. Sending Menu.")
                                     session = {"purpose": None, "bhk": None, "location": None, "budget": None, "agency_tag": None, "state": None, "intent": None, "greeting_done": True, "chat_history": []}
@@ -1308,6 +1338,7 @@ async def process_whatsapp_data(data: dict):
 
                                     elif btn_id == "btn_visit":
                                         session["state"] = "SCHEDULING_VISIT"
+                                        session["funnel_state"] = "AWAITING_VISIT_INFO"
                                         ai_response = "Behtareen! Is property ka physical visit arrange karne ke liye, barah-e-karam apna Pura Naam aur Phone Number share kardein taake hamara agent aapse rabta kar le. 📅🤝"
                                         send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
                                         save_supabase_message(from_number, "user", "Clicked Visit Schedule", tenant_id)
@@ -1323,7 +1354,7 @@ async def process_whatsapp_data(data: dict):
                                     return PlainTextResponse(content="OK", status_code=200)
                                     
                                 is_greeting = any(word in msg_clean for word in ["salam", "hello", "hi", "assalam", "hy"])
-                                if is_greeting and session.get("purpose"):
+                                if is_greeting and session.get("purpose") and time_since_last > 7200:
                                     logger.info("Returning user greeted. Sending contextual prompt.")
                                     RETURNING_PROMPT = f"""User is returning. Past context: {session}.
 User message: "{msg_body}"
