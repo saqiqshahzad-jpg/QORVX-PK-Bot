@@ -1061,6 +1061,7 @@ Strict Rules:
   1. **Preserve Everything:** Always carry forward the existing valid `property_type`, `purpose`, `location`, `bhk`, and `budget` into your output JSON. Do NOT set any previously captured parameter to `null` just because the user didn't repeat it in their newest message.
   2. **Intent Shift Handling:** If the user explicitly changes their mind about the core property (e.g., switches from 'Flat' to 'Plot'), update the `property_type` to the new value. However, because property types have different metrics, you MUST set ONLY `bhk` and `budget` to `null` to gracefully ask for their new budget/requirements. Keep the `purpose` and `location` intact unless explicitly changed.
   3. **Never Forget:** Once a user confirms a property type, never ask them for it again unless they request a change.
+- CRITICAL LONG-TERM MEMORY RULE: You are interacting with a user whose past preferences (location, budget, property type) are permanently saved. If they return after a long time and say 'Hi', warmly acknowledge their last known preference (e.g., 'Welcome back! Are you still looking for a [property_type] in [location]?'). NEVER overwrite existing parameters with 'null' unless the user explicitly changes their mind.
 - CRITICAL FORMATTING (English/Numeric Normalization): No matter what language or script the user inputs (Urdu script, Roman Urdu, etc.), you MUST translate and save ALL extracted JSON parameter values in standard English spelling and standard numeric digits. Examples: If the user says 'اسلام آباد', save "location": "Islamabad". If the user says 'ایک لاکھ بیس ہزار', save "budget": 120000. If the user says 'فلیٹ', save "property_type": "flat". If the user says 'لاہور', save "location": "Lahore". If the user says 'پانچ کروڑ', save "budget": 50000000. NEVER save Urdu script (Arabic alphabet) inside the JSON parameter values. All city names, property types, and numeric values MUST be in English.
 - When ALL 4 variables are collected, YOU MUST OUTPUT EXACTLY THIS JSON FORMAT ON A NEW LINE:
 [PROPERTY_SEARCH: {{"bhk":<int>,"budget":<int>,"location":"<str>","purpose":"buy"|"rent"}}]
@@ -1217,6 +1218,7 @@ async def process_whatsapp_data(data: dict):
                                 last_ai_msg = db_history[-1]["content"] if db_history else ""
                                 
                                 msg_clean = msg_body.lower().strip()
+                                skip_extraction = False
                                 
                                 # --- INTELLIGENT ROUTER & SUPABASE PERSISTENCE ---
                                 # session is already fetched above for DEDUP check
@@ -1289,9 +1291,7 @@ async def process_whatsapp_data(data: dict):
                                         return PlainTextResponse(content="OK", status_code=200)
 
                                     elif btn_id == "btn_cheaper":
-                                        session["state"] = None 
                                         session["budget"] = None
-                                        session["seen_properties"] = []
                                         ai_response = "Janab, bilkul! Main aapko is se kam price mein options dikhata hoon. Barah-e-karam apna naya approximate budget bata dein? 📉"
                                         send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
                                         save_supabase_message(from_number, "user", "Clicked Sasti Option", tenant_id)
@@ -1300,12 +1300,11 @@ async def process_whatsapp_data(data: dict):
 
                                     elif btn_id == "btn_next":
                                         session["state"] = None
-                                        session["active_property"] = None
                                         ai_response = f"Zaroor janab! Main aapko isi criteria mein agli behtareen property nikal kar deta hoon... 🔍"
                                         send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
                                         save_supabase_message(from_number, "user", "Clicked Koi Aur Option", tenant_id)
                                         save_supabase_message(from_number, "assistant", ai_response, tenant_id)
-                                        return PlainTextResponse(content="OK", status_code=200)
+                                        skip_extraction = True
 
                                     elif btn_id == "btn_visit":
                                         session["state"] = "SCHEDULING_VISIT"
@@ -1316,20 +1315,9 @@ async def process_whatsapp_data(data: dict):
                                         return PlainTextResponse(content="OK", status_code=200)
 
                                 if msg_clean == "menu":
-                                    logger.info("User requested menu. Clearing context.")
-                                    if "archived_intents" not in session:
-                                        session["archived_intents"] = []
-                                    if session.get("purpose") or session.get("property_type"):
-                                        session["archived_intents"].append({
-                                            "property_type": session.get("property_type"),
-                                            "budget": session.get("budget"),
-                                            "bhk": session.get("bhk"),
-                                            "location": session.get("location"),
-                                            "purpose": session.get("purpose")
-                                        })
+                                    logger.info("User requested menu. Preserving context.")
                                     session["state"] = None
                                     session["intent"] = None
-                                    session["purpose"] = None
                                     session["active_property"] = None
                                     send_menu_buttons(from_number, tenant_id, whatsapp_token)
                                     return PlainTextResponse(content="OK", status_code=200)
@@ -1415,7 +1403,8 @@ Action: Greet them back politely. Acknowledge their past interest naturally. Ask
 
                                 # ═══ SESSION STATE: Extract & persist parameters ═══
                                 # ── Update Core Session Context ──
-                                session = extract_and_update_session(session, msg_body, db_history, tenant_id, tenant_config)
+                                if not skip_extraction:
+                                    session = extract_and_update_session(session, msg_body, db_history, tenant_id, tenant_config)
                                 logger.info(f"🧠 [SESSION] {from_number}: bhk={session.get('bhk')} loc={session.get('location')} purpose={session.get('purpose')} budget={session.get('budget')} market={session.get('market')}")
 
                                 # =========================================================================================
@@ -2039,12 +2028,7 @@ STRICT ANTI-HALLUCINATION RULES:
                                                     
                                                     # Clear state
                                                     session["state"] = None
-                                                    session["purpose"] = None
-                                                    session["property_type"] = None
-                                                    session["location"] = None
-                                                    session["budget"] = None
-                                                    session["bhk"] = None
-                                                    logger.info(f"Escalation triggered for {from_number}. Saved to Urgent_Leads.")
+                                                    logger.info(f"Escalation triggered for {from_number}. Saved to Urgent_Leads. State preserved.")
                                                 except Exception as e:
                                                     logger.error(f"Failed to route urgent lead: {e}")
                                             
