@@ -106,10 +106,10 @@ def transcribe_audio_groq(file_path: str):
     try:
         client = Groq() # Automatically uses the existing GROQ_API_KEY from environment
         with open(file_path, "rb") as file:
-            transcription = client.audio.translations.create(
+            transcription = client.audio.transcriptions.create(
                 file=(file_path, file.read()),
                 model="whisper-large-v3",
-                response_format="json"
+                language="en"  # CRITICAL: Forces Roman Urdu/English alphabet output
             )
         
         # Bulletproof extraction logic
