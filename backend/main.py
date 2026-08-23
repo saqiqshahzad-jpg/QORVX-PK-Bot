@@ -1262,7 +1262,8 @@ async def process_whatsapp_data(data: dict):
                                     import re
                                     match = re.search(r"mujhe\s+(.+?)\s+ki properties", msg_body, re.IGNORECASE)
                                     if match:
-                                        session["agency_tag"] = match.group(1).strip()
+                                        raw_tag = match.group(1).strip()
+                                        session["agency_tag"] = raw_tag.replace("-", "_")
                                         logger.info(f"Extracted agency_tag from regex: {session['agency_tag']}")
                                     else:
                                         cache_buster = int(time.time() // 300)
