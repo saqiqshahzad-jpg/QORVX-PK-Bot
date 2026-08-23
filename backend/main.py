@@ -522,7 +522,7 @@ def send_property_media_sequence(to_number: str, prop: dict, tenant_id: str, acc
     # 3. Dispatch Images (NO CAPTIONS)
     for idx, img_url in enumerate(image_urls):
         send_whatsapp_media(tenant_id, to_number, img_url, "image", access_token, caption="")
-        time.sleep(0.5) # Prevent Meta rate-limit drops
+        time.sleep(0.8) # Prevent Meta rate-limit drops
 
     # 4. Dispatch Video
     if video_url and video_url != "N/A" and video_url.startswith("http"):
@@ -1235,7 +1235,12 @@ async def process_whatsapp_data(data: dict):
                                         
                                         sheet.append_row([date_str, msg_body, active_prop, agency_tag, from_number])
                                     except Exception as e:
-                                        logger.error(f"Failed to save visit info to sheet: {e}")
+                                        if "<Response [200]>" in str(e) or (hasattr(e, 'response') and getattr(e.response, 'status_code', None) == 200) or (hasattr(e, 'status_code') and e.status_code == 200):
+                                            logger.info(f"[INFO] - Successfully logged visit booking for {from_number}")
+                                        else:
+                                            logger.error(f"Failed to save visit info to sheet: {e}")
+                                    else:
+                                        logger.info(f"[INFO] - Successfully logged visit booking for {from_number}")
                                         
                                     session["funnel_state"] = "COMPLETED"
                                     session["last_interaction"] = time.time()
@@ -1758,7 +1763,6 @@ Action: Greet them back politely. Acknowledge their past interest naturally. Ask
                                         
                                     # --- STATE 3: BOOKING VISIT (LEAD CAPTURE) ---
                                     if session.get("state") == "BOOKING_VISIT":
-                                        import re
                                         from datetime import datetime
                                         
                                         # 1. Extract Email
@@ -1846,8 +1850,13 @@ USER'S MESSAGE: "{msg_body}"
 STRICT RULES FOR YOUR RESPONSE:
 1. SMALL TALK / GREETINGS: Agar user ka message sirf "hello", "hi", "ji", "kia hua", ya koi casual filler hai, toh bilkul natural aur short jawab dein. DO NOT repeat the property details. (Example: "Ji janab, main yahan hoon. Boliye, is property ke hawale se aap kya janna chahte hain?"). 
 2. ANSWER DIRECTLY: Agar user property ka koi detail (price, rooms, parking, kitchen) pooche, toh sirf us akele sawal ka short aur direct jawab dein BACKGROUND CONTEXT se.
-3. ZERO HALLUCINATIONS: Agar koi baat BACKGROUND CONTEXT mein nahi hai, toh politely maazrat karein aur kahein: "Janab, is detail ke liye main agent se baat karwa deta hoon, barah-e-karam apna Name aur Email share kardein."
-4. GENDER-NEUTRAL: Always use 'Janab' or 'Aap'. NEVER use 'Sir' or 'Bhai'.
+3. CRITICAL Q&A & ZERO-SILENCE RULE:
+- If the user asks ANY question regarding the currently active property (e.g., videos, parking, gym, mosque, corner plot, installment schedule, possession details):
+  1. If the information exists in the property details, answer concisely and professionally.
+  2. If the information is NOT available (such as video walkthroughs or specific paperwork), NEVER remain silent. Politely explain: "Janab, filhal hamare digital system mein iski video/specific detail uploaded nahi hai, lekin visit ke waqt hamara agent aapko mukammal detail provide kar dega. Kya aap physical visit schedule karna chahenge?"
+- You must ALWAYS produce a helpful, courteous response.
+4. ZERO HALLUCINATIONS: Agar koi baat BACKGROUND CONTEXT mein nahi hai, toh politely maazrat karein aur kahein: "Janab, is detail ke liye main agent se baat karwa deta hoon, barah-e-karam apna Name aur Email share kardein."
+5. GENDER-NEUTRAL: Always use 'Janab' or 'Aap'. NEVER use 'Sir' or 'Bhai'."""
 5. TONE: 100% Conversational and natural Roman Urdu. Like a helpful human, not a robot.
 6. OFF-TOPIC RECOVERY: Agar user koi aisi baat kare jo property se related nahi hai, toh politely uski baat ka short jawab dein aur aakhir mein add karein: "Waise janab, jo property maine aapko abhi dikhayi hai, kya aap uska visit schedule karna chahenge?"
 """
@@ -1958,7 +1967,7 @@ STRICT RULES FOR YOUR RESPONSE:
                                                 send_property_media_sequence(from_number, prop, tenant_id, whatsapp_token)
                                                 
                                                 # Add delay to allow Meta servers to process and deliver media before sending lightweight buttons
-                                                time.sleep(4)
+                                                time.sleep(7)
                                                 
                                                 # Step 4: Interactive Action Buttons
                                                 outro_msg = "Kya aap is property ka visit schedule karna chahte hain? 🤝"
