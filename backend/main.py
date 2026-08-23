@@ -109,6 +109,7 @@ def transcribe_audio_groq(file_path: str):
             transcription = client.audio.transcriptions.create(
                 file=(file_path, file.read()),
                 model="whisper-large-v3",
+                language="ur",
                 response_format="json"
             )
         
@@ -1057,6 +1058,7 @@ Your main objective is to collect these exactly 4 details before searching the d
 Strict Rules:
 - Until ALL 4 details are collected, politely ask ONLY for the missing details (AFTER the user has stated intent).
 - CRITICAL NORMALIZATION RULE: When parsing the budget, ALWAYS convert textual currency ("50 lakh", "1.5 crore", "50k") into pure integers (e.g., 5000000, 15000000, 50000). Never output strings for budget.
+- CRITICAL MEMORY RULE (State Retention): You MUST preserve and carry forward any parameters (location, bhk, budget, purpose) that the user provided in previous turns. ONLY update a parameter if the user explicitly changes it. DO NOT set previously acquired parameters to null just because they are missing from the user's newest message. Build upon the existing state.
 - When ALL 4 variables are collected, YOU MUST OUTPUT EXACTLY THIS JSON FORMAT ON A NEW LINE:
 [PROPERTY_SEARCH: {{"bhk":<int>,"budget":<int>,"location":"<str>","purpose":"buy"|"rent"}}]
 """
