@@ -62,14 +62,14 @@ app = FastAPI()
 # =========================================================================================
 # 👑 PRODUCTION ENVIRONMENT VARIABLES LOCK
 # =========================================================================================
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY")
 
 MY_VERIFY_TOKEN = os.environ.get("WHATSAPP_VERIFY_TOKEN", "ALAAUDIN_SECRET_TOKEN")
 
-client = Groq(api_key=GROQ_API_KEY, max_retries=0)
-MODEL_ID = "llama-3.1-8b-instant"
-FALLBACK_MODEL = "gemma2-9b-it"
+client = Groq(api_key=OPENROUTER_API_KEY, base_url="https://openrouter.ai/api/v1", max_retries=0)
+MODEL_ID = "google/gemini-2.0-flash-exp:free"
+FALLBACK_MODEL = "meta-llama/llama-3.1-8b-instruct:free"
 
 # =========================================================================================
 # 🎙️ AUDIO MESSAGE PROCESSING (Meta Download + OpenAI Whisper)
