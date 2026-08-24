@@ -2203,14 +2203,15 @@ STRICT ANTI-HALLUCINATION RULES:
 18. SPAM / GIBBERISH / TYPOS: If the user sends a random string of characters (like "asdfgh"), only emojis, or an empty message, DO NOT try to parse it. Respond politely with: "Janab, main aapki baat samajh nahi paya, barah-e-karam property ke hawale se apna sawal poochein."
 19. DOUBLE INTENT (MIXED REQUESTS): If the user asks to do two things at once (e.g., "Mujhe plot lena hai aur flat bechna hai"), ALWAYS prioritize the FIRST task mentioned. Acknowledge both but steer the conversation to solve the first one first. (e.g., "Zaroor! Pehle hum aapke naye plot ki details save kar lete hain, phir flat ki baat karenge. Plot ke liye aapka budget kya hai?")
 20. OUT OF SYLLABUS (OFF-TOPIC): If the user asks questions unrelated to real estate, properties, or our agency (e.g., weather, politics, general AI questions), STRICTLY REFUSE TO ANSWER. Respond politely: "Janab, main ek Real Estate Assistant hoon. Main sirf properties aur real estate ke hawale se aapki rehnumai kar sakta hoon. Batayein, aap kis type ki property dekh rahe hain?"
-21. CRITICAL INTENT ROUTING RULES (CLASSIFICATION): You MUST classify each user message into one of these three intents for "intent_action":
-   - "small_talk": If the user asks ANY follow-up question about the property they are currently viewing (e.g., "Is there gas?", "What is the size?", "iska btao"), or is just greeting/saying thanks, you MUST set "intent_action": "small_talk". Provide the answer concisely in ai_response. NEVER set it to "search", as "search" will trigger a completely new property dispatch and annoy the user.
+21. CRITICAL INTENT ROUTING RULES (CLASSIFICATION): You MUST classify each user message into one of these four intents for "intent_action":
+   - "small_talk": If the user is just greeting, saying thanks, ok, yes, etc., you MUST set "intent_action": "small_talk". Provide the answer concisely in ai_response.
+   - "qa": If the user asks ANY specific question about the current property's features, amenities, videos, location, or details (e.g., 'pani hai?', 'video hai?', 'iska btao'). Output "qa" so the system knows strictly to answer the question WITHOUT re-querying the database.
    - "search": ONLY set "intent_action": "search" when the user is explicitly providing NEW funnel parameters (like changing their budget) or actively asking to find a brand NEW property.
    - "clarify": If the user's input is confusing, ambiguous, or if they reply to an image with an unclear text (e.g., "yeh wala?", "hmm"), set "intent_action": "clarify". In ai_response, explicitly ask for confirmation: "Janab, kya aap is property ke hawalay se kuch poochna chah rahe hain? Ya koi aur option dekhna chahenge?"
-   RULE: If intent_action is 'small_talk' or 'clarify', DO NOT output property parameter updates. Just write a natural conversational reply.
+   RULE: If intent_action is 'small_talk', 'clarify', or 'qa', DO NOT output property parameter updates. Just write a natural conversational reply.
 22. JSON FORMAT REQUIRED: You must respond ONLY in strictly valid JSON format with these exact keys:
 - "ai_response": Your conversational response in Roman Urdu.
-- "intent_action": (string) One of: "small_talk", "clarify", or "search".
+- "intent_action": (string) One of: "small_talk", "qa", "clarify", or "search".
 - "visit_intent_detected": (boolean) If the user's message expresses ANY desire to visit, see, tour, or inspect the property in person (e.g., 'visit kb kr skte', 'dekhna hai'), set this to true. Otherwise false.
 """
                                             if agency_profile:
@@ -2240,13 +2241,13 @@ STRICT ANTI-HALLUCINATION RULES:
                                                 extracted_data = {}
                                             
                                             # ═══════════════════════════════════════════════════════════════
-                                            # INTENT ROUTING: small_talk / clarify / search
+                                            # INTENT ROUTING: small_talk / qa / clarify / search
                                             # ═══════════════════════════════════════════════════════════════
                                             intent = extracted_data.get("intent_action", "search") if isinstance(extracted_data, dict) else "search"
                                             logger.info(f"[INTENT ROUTER] Classified intent: '{intent}' for message: '{msg_body[:50]}'")
                                             
-                                            if intent in ["small_talk", "clarify"]:
-                                                # Small-talk or clarification: send conversational reply, do NOT query DB
+                                            if intent in ["small_talk", "clarify", "qa"]:
+                                                # Small-talk, Q&A, or clarification: send conversational reply, do NOT query DB
                                                 reply_text = ai_response if ai_response else "Jee janab, main hazir hoon! 🤝"
                                                 
                                                 # CRITICAL FAILSAFE: Never send empty string to Meta API
