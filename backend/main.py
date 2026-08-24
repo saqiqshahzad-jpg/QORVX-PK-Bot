@@ -68,8 +68,8 @@ RESEND_API_KEY = os.environ.get("RESEND_API_KEY")
 MY_VERIFY_TOKEN = os.environ.get("WHATSAPP_VERIFY_TOKEN", "ALAAUDIN_SECRET_TOKEN")
 
 client = Groq(api_key=GROQ_API_KEY, max_retries=0)
-MODEL_ID = "openai/gpt-oss-20b"
-FALLBACK_MODEL = "openai/gpt-oss-20b"
+MODEL_ID = "llama-3.1-8b-instant"
+FALLBACK_MODEL = "llama-3.1-8b-instant"
 
 # =========================================================================================
 # 🎙️ AUDIO MESSAGE PROCESSING (Meta Download + OpenAI Whisper)
@@ -148,7 +148,7 @@ def robust_chat_completion(messages_array, temperature, max_tokens, json_mode=Fa
             class FakeChoice:
                 def __init__(self):
                     class Msg:
-                        content = "I appreciate your interest! Could you let me know which city or area you are looking in, and whether you want to Buy or Rent? This will help me find the perfect property for you! 🏛️"
+                        content = "Janab, system par is waqt thora load hai. Barah-e-karam 10 second baad apna message dobara bhejein. Shukriya! 🙏"
                     self.message = Msg()
             class FakeCompletion:
                 def __init__(self):
@@ -1372,23 +1372,13 @@ async def process_whatsapp_data(data: dict):
                                     logger.info("New user detected. Sending Menu.")
                                     session = {"purpose": None, "bhk": None, "location": None, "budget": None, "agency_tag": None, "state": None, "intent": None, "greeting_done": True, "chat_history": []}
                                     
-                                    # --- EXTRACT AGENCY TAG FROM INITIAL MESSAGE ---
-                                    # Pattern: "mujhe [Agency_Name] ki properties"
-                                    # import re
-                                    match = re.search(r"mujhe\s+(.+?)\s+ki properties", msg_body, re.IGNORECASE)
+                                    # Pattern: "mujhy [Agency_Name] ki properties"
+                                    match = regex_module.search(r'mujhy\s+(.*?)\s+ki\s+properties', msg_body, regex_module.IGNORECASE)
                                     if match:
-                                        raw_tag = match.group(1).strip()
-                                        session["agency_tag"] = raw_tag.replace("-", "_")
+                                        session["agency_tag"] = match.group(1).strip().replace("-", "_").replace(" ", "_")
                                         logger.info(f"Extracted agency_tag from regex: {session['agency_tag']}")
                                     else:
-                                        cache_buster = int(time.time() // 300)
-                                        unique_tags = get_agency_tags(tenant_id, tenant_config.get("booking_sheet_name"), tenant_config.get("property_sheet_name"), cache_buster)
-                                        for tag in unique_tags:
-                                            clean_tag = tag.strip().lower()
-                                            if clean_tag and (clean_tag in msg_clean or clean_tag.replace("_", " ") in msg_clean):
-                                                session["agency_tag"] = tag.strip()
-                                                logger.info(f"Dynamically locked agency_tag on first message: {session['agency_tag']}")
-                                                break
+                                        session["agency_tag"] = None
                                             
                                     active_sessions.append((from_number, session, tenant_id))
                                     
