@@ -1332,13 +1332,18 @@ async def process_whatsapp_data(data: dict):
                                     logger.info(f"Received visit info from {from_number}: {msg_body}")
                                     try:
                                         workspace = GoogleSpreadsheetClient(tenant_id, booking_sheet_name, property_sheet_name)
-                                        sheet = workspace.gc.open(booking_sheet_name).sheet1
+                                        # FIXED: Target the "Leads" tab inside the MASTER DATABASE sheet, NOT BookingSlot
+                                        sheet = workspace.gc.open(workspace.property_sheet_name).worksheet("Leads")
                                         
-                                        date_str = datetime.datetime.now(pytz.timezone("Asia/Karachi")).strftime("%Y-%m-%d %H:%M:%S")
-                                        active_prop = str(session.get("active_property", ""))
-                                        agency_tag = session.get("agency_tag", "")
+                                        # Extract Property_ID from active_property (dict or string)
+                                        active_prop = session.get("active_property", {})
+                                        if isinstance(active_prop, dict):
+                                            active_property_id = str(active_prop.get("Property_ID", active_prop.get("property_id", "Unknown")))
+                                        else:
+                                            active_property_id = str(active_prop) if active_prop else "Unknown"
                                         
-                                        sheet.append_row([date_str, msg_body, active_prop, agency_tag, from_number])
+                                        # STRICT 3-COLUMN FORMAT: [msg_body, phone_number, property_id]
+                                        sheet.append_row([msg_body, str(from_number), active_property_id])
                                     except Exception as e:
                                         if "<Response [200]>" in str(e) or (hasattr(e, 'response') and getattr(e.response, 'status_code', None) == 200) or (hasattr(e, 'status_code') and e.status_code == 200):
                                             logger.info(f"[INFO] - Successfully logged visit booking for {from_number}")
@@ -1868,31 +1873,21 @@ Action: Greet them back politely. Acknowledge their past interest naturally. Ask
                                         
                                     # --- STATE 3: BOOKING VISIT (LEAD CAPTURE) ---
                                     if session.get("state") == "BOOKING_VISIT":
-                                        from datetime import datetime
-                                        
-                                        # 1. Extract Email
-                                        email_match = regex_module.search(r'[\w\.-]+@[\w\.-]+\.\w+', msg_body)
-                                        email = email_match.group(0) if email_match else "N/A"
-                                        
-                                        # 2. Extract Name cleanly (strip email and punctuation)
-                                        name = msg_body.replace(email, "").replace(",", "").replace("/", "").strip()
-                                        if not name:
-                                            name = "Client"
-                                            
-                                        # 3. Context Data
+                                        # Context Data
                                         active_prop = session.get("active_property", {})
-                                        property_id = active_prop.get("Property_ID", active_prop.get("property_id", "Prop_Unknown"))
-                                        phone_number = str(from_number)
-                                        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                        if isinstance(active_prop, dict):
+                                            property_id = active_prop.get("Property_ID", active_prop.get("property_id", "Unknown"))
+                                        else:
+                                            property_id = str(active_prop) if active_prop else "Unknown"
                                         
-                                        # 4. Strict Column Order: [Col A: Property_ID, Col B: Name, Col C: Email, Col D: Phone_Number, Col E: Date_Time]
-                                        lead_row = [str(property_id), str(name), str(email), str(phone_number), str(current_time)]
+                                        # STRICT 3-COLUMN FORMAT: [msg_body, phone_number, property_id]
+                                        lead_row = [msg_body, str(from_number), str(property_id)]
                                         
                                         try:
                                             workspace = GoogleSpreadsheetClient(tenant_id, booking_sheet_name, property_sheet_name)
-                                            sheet = workspace.gc.open(property_sheet_name).worksheet("Leads")
+                                            sheet = workspace.gc.open(workspace.property_sheet_name).worksheet("Leads")
                                             sheet.append_row(lead_row)
-                                            logger.info(f"Lead Row Appended: {lead_row}")
+                                            logger.info(f"Lead Row Appended to Leads tab: {lead_row}")
                                         except Exception as e:
                                             logger.error(f"Failed to append row to Leads sheet: {e}")
                                             
@@ -1912,14 +1907,23 @@ Action: Greet them back politely. Acknowledge their past interest naturally. Ask
                                         if "sasti" in msg_body.lower() or "koi aur" in msg_body.lower():
                                             session["state"] = None  # Reset state to allow new search
                                         else:
-                                            # Fallback Lead Capture Routing
-                                            email_match = regex_module.search(r'[\w\.-]+@[\w\.-]+\.\w+', msg_body)
-                                            if email_match:
-                                                client_email = email_match.group(0)
-                                                client_name = "Client"  # Simple fallback
-                                                prop_id = session.get("active_property", {}).get("Property_ID", "Unknown")
-                                                workspace = GoogleWorkspaceManager(tenant_id, booking_sheet_name, property_sheet_name)
-                                                workspace.append_lead_record(from_number, client_name, client_email, prop_id, "PK")
+                                            # Fallback Lead Capture Routing (detects phone number in message)
+                                            fallback_phone_match = regex_module.search(r'(?:\+92|0)[3]\d{2}[\s\-]?\d{7}', msg_body)
+                                            if fallback_phone_match:
+                                                active_prop = session.get("active_property", {})
+                                                if isinstance(active_prop, dict):
+                                                    prop_id = active_prop.get("Property_ID", active_prop.get("property_id", "Unknown"))
+                                                else:
+                                                    prop_id = str(active_prop) if active_prop else "Unknown"
+                                                
+                                                # STRICT 3-COLUMN FORMAT: [msg_body, phone_number, property_id]
+                                                try:
+                                                    workspace = GoogleSpreadsheetClient(tenant_id, booking_sheet_name, property_sheet_name)
+                                                    sheet = workspace.gc.open(workspace.property_sheet_name).worksheet("Leads")
+                                                    sheet.append_row([msg_body, str(from_number), str(prop_id)])
+                                                    logger.info(f"Fallback Lead Appended to Leads tab: [{msg_body}, {from_number}, {prop_id}]")
+                                                except Exception as e:
+                                                    logger.error(f"Failed to append fallback lead to Leads sheet: {e}")
                                                 
                                                 confirm_msg = "Shukriya Janab! Aapki details agent ko bhej di gayi hain, wo jald aapse rabta karenge. 🤝"
                                                 send_whatsapp_text(tenant_id, from_number, confirm_msg, whatsapp_token)
