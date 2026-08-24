@@ -2156,3 +2156,59 @@ STRICT ANTI-HALLUCINATION RULES:
                     update_user_session(phone, session_data, tenant)
             except Exception as e:
                 logger.error(f"🚨 Failed to save session in finally block: {str(e)}")
+
+# =========================================================================================
+# 🔄 ABANDONED FUNNEL RE-ENGAGEMENT BACKGROUND TASK
+# =========================================================================================
+import asyncio
+from datetime import datetime, timedelta, timezone
+
+async def run_abandoned_funnel_check():
+    while True:
+        try:
+            logger.info("Running Abandoned Funnel Re-Engagement Check...")
+            if not supabase:
+                logger.error("Supabase client not initialized, skipping abandoned funnel check.")
+                await asyncio.sleep(3600)
+                continue
+            
+            # Filter for users inactive for > 24 hours
+            cutoff_time = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+            
+            # Fetch sessions older than 24 hours
+            response = supabase.table('user_sessions').select('*').lt('updated_at', cutoff_time).execute()
+            
+            if response.data:
+                for record in response.data:
+                    session = record.get('session_data', {})
+                    followup_sent = session.get('followup_sent', False)
+                    
+                    budget = session.get('budget')
+                    funnel_state = session.get('funnel_state')
+                    
+                    # Check if funnel not completed and followup not sent
+                    if not followup_sent and (funnel_state != 'COMPLETED' or budget is None):
+                        phone = record.get('phone_number')
+                        tenant_id = record.get('tenant_id')
+                        
+                        tenant_config = get_tenant_config(tenant_id)
+                        if tenant_config and tenant_config.get('whatsapp_token'):
+                            whatsapp_token = tenant_config.get('whatsapp_token')
+                            msg = "Salam Janab! Kal aap property ke hawale se maloomat le rahe thay. Kya aapko mazeed options dekhne hain ya main seedha kisi senior agent se aapka rabta karwaun? 🏡"
+                            
+                            send_whatsapp_text(tenant_id, phone, msg, whatsapp_token)
+                            logger.info(f"Sent abandoned funnel followup to {phone} for tenant {tenant_id}")
+                            
+                            # Update session with flag to prevent spam
+                            session['followup_sent'] = True
+                            update_user_session(phone, session, tenant_id)
+                            
+        except Exception as e:
+            logger.error(f"Error in run_abandoned_funnel_check: {str(e)}")
+            
+        # Run every 1 hour
+        await asyncio.sleep(3600)
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(run_abandoned_funnel_check())
