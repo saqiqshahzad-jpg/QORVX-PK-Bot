@@ -32,6 +32,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, RedirectResponse
 from pydantic import BaseModel
 from groq import Groq
+from openai import OpenAI
 import tempfile
 
 # ═══ SESSION STATE & DEDUP STORES ═══
@@ -67,7 +68,7 @@ RESEND_API_KEY = os.environ.get("RESEND_API_KEY")
 
 MY_VERIFY_TOKEN = os.environ.get("WHATSAPP_VERIFY_TOKEN", "ALAAUDIN_SECRET_TOKEN")
 
-client = Groq(api_key=OPENROUTER_API_KEY, base_url="https://openrouter.ai/api/v1", max_retries=0)
+client = OpenAI(api_key=OPENROUTER_API_KEY, base_url="https://openrouter.ai/api/v1", max_retries=0)
 MODEL_ID = "google/gemini-2.0-flash-exp:free"
 FALLBACK_MODEL = "meta-llama/llama-3.1-8b-instruct:free"
 
