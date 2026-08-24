@@ -863,19 +863,85 @@ def detect_purpose(msg_body: str, chat_history: list) -> str:
     return "unknown"
 
 def normalize_budget(budget_str: str) -> int:
-    s = str(budget_str).lower().replace(",", "").replace("pkr", "").strip()
+    """Converts South Asian budget slang/typos into pure integers.
+    Handles: crore, caror, cr, lakh, lac, k, m, dedh, dhai, sawa, paunay, etc.
+    """
+    s = str(budget_str).lower().replace(",", "").replace("pkr", "").replace("rs", "").replace("rupees", "").strip()
     try:
-        num_match = re.search(r'([\d]+\.?\d*)', s)
-        if not num_match: return 0
-        num = float(num_match.group(1))
-        
-        if any(kw in s for kw in ["crore", "cr", "karor", "karoar"]):
+        # ── STEP 1: Handle Urdu/Desi fractional slang BEFORE numeric extraction ──
+        # These words imply a specific multiplier even without a leading digit.
+        desi_prefix = 1.0  # default: no prefix multiplier
+        if re.search(r'\bdedh\b', s):        # dedh = 1.5
+            desi_prefix = 1.5
+            s = re.sub(r'\bdedh\b', '', s).strip()
+        elif re.search(r'\bdhai\b', s) or re.search(r'\bdhaii\b', s) or re.search(r'\bdhaai\b', s):  # dhai = 2.5
+            desi_prefix = 2.5
+            s = re.sub(r'\bdh?aa?ii?\b', '', s).strip()
+        elif re.search(r'\bsawa\b', s):      # sawa = 1.25
+            desi_prefix = 1.25
+            s = re.sub(r'\bsawa\b', '', s).strip()
+        elif re.search(r'\bpaunay?\b', s):   # paunay/pauna = 0.75 of next unit
+            desi_prefix = 0.75
+            s = re.sub(r'\bpaunay?\b', '', s).strip()
+        elif re.search(r'\bsaadhe?\b', s):   # saadhe/saadha = X.5
+            desi_prefix = 0.5  # will be ADDED to the extracted number
+            s = re.sub(r'\bsaadhe?\b', '', s).strip()
+
+        # ── STEP 2: Detect unit (crore vs lakh vs k vs m) ──
+        # Expanded keyword bank to catch typos like "caror", "7caror", "crr", "lakk"
+        is_crore = bool(re.search(r'(?:crore|caror|karor|karoar|caroar|cror|crr|cr)\b', s))
+        is_lakh  = bool(re.search(r'(?:lakh|lakhs|lac|lacs|lak|lakk)\b', s))
+        is_k     = bool(re.search(r'\d+\s*k\b', s))       # e.g. "50k"
+        is_m     = bool(re.search(r'\d+\s*m\b', s))       # e.g. "1.5m"
+
+        # ── STEP 3: Handle fused typos like "7caror" (digit glued to unit) ──
+        fused_match = re.search(r'(\d+\.?\d*)\s*(?:crore|caror|karor|karoar|caroar|cror|crr|cr)', s)
+        if fused_match:
+            is_crore = True
+
+        fused_lakh = re.search(r'(\d+\.?\d*)\s*(?:lakh|lakhs|lac|lacs|lak|lakk)', s)
+        if fused_lakh:
+            is_lakh = True
+
+        # ── STEP 4: Extract the numeric part ──
+        num_match = re.search(r'(\d+\.?\d*)', s)
+
+        if num_match:
+            num = float(num_match.group(1))
+        elif desi_prefix != 1.0:
+            # No digit found but desi prefix exists (e.g. "dedh crore" with no digit)
+            num = 1.0  # implicit 1
+        else:
+            return 0
+
+        # ── STEP 5: Apply desi prefix ──
+        # Special handling: "saadhe" adds 0.5 (e.g. saadhe 3 crore = 3.5 crore)
+        if re.search(r'\bsaadhe?\b', str(budget_str).lower()):
+            num = num + desi_prefix  # desi_prefix is 0.5 for saadhe
+        elif desi_prefix != 1.0 and num_match:
+            # If user said "dedh crore" AND also typed a number, use the prefix as the number
+            # e.g. "dedh crore" -> num=1.5, not "dedh 2 crore" -> 2*1.5
+            # Only override if the extracted num seems like a unit count
+            if num <= 10:
+                num = desi_prefix
+            else:
+                num = num  # large number with prefix doesn't make sense, keep as-is
+        elif desi_prefix != 1.0 and not num_match:
+            num = desi_prefix
+
+        # ── STEP 6: Multiply by unit ──
+        if is_crore:
             return int(num * 10000000)
-        elif any(kw in s for kw in ["lac", "lacs", "lakh", "lakhs"]):
+        elif is_lakh:
             return int(num * 100000)
+        elif is_k:
+            return int(num * 1000)
+        elif is_m:
+            return int(num * 1000000)
         else:
             return int(num)
-    except Exception:
+    except Exception as e:
+        logger.warning(f"normalize_budget failed for '{budget_str}': {e}")
         return 0
 
 def format_currency(amount: int) -> str:
@@ -977,17 +1043,25 @@ def extract_and_update_session(session: dict, msg_body: str, chat_history: list,
                 if not msg_lower.strip().isdigit():
                     session["location"] = msg_body.strip().title()
 
-    # ── BUDGET detection ──
+    # ── BUDGET detection (Enhanced South Asian Currency Parsing) ──
     if not session.get("budget"):
-        # Budget Extraction (Requires Lakh, Crore, Thousand, K, or numbers >= 1000)
-        budget_keywords = ["lakh", "lac", "crore", "cr", "hazar", "k", "budget", "pkr", "rs"]
+        # Expanded keyword bank: covers typos, slang, fused terms like "7caror"
+        budget_keywords = [
+            "lakh", "lac", "lacs", "lakhs", "lak", "lakk",
+            "crore", "cr", "karor", "karoar", "caror", "caroar", "cror", "crr",
+            "hazar", "k", "m", "budget", "pkr", "rs", "rupees",
+            "dedh", "dhai", "dhaii", "dhaai", "sawa", "paunay", "pauna", "saadhe", "saadha"
+        ]
         has_budget_context = any(k in msg_lower for k in budget_keywords)
+        
+        # Also detect fused patterns like "7caror" or "50k" (digit glued to unit)
+        has_fused_budget = bool(re.search(r'\d+\s*(?:crore|caror|karor|cr|cror|crr|lakh|lac|lak|k|m)\b', msg_lower))
         
         # Extract large numeric values
         digits = re.findall(r'\b\d+\b', msg_lower)
-        if digits:
-            val = int(digits[0])
-            if has_budget_context or val > 1000:
+        if digits or has_budget_context or has_fused_budget:
+            val = int(digits[0]) if digits else 0
+            if has_budget_context or has_fused_budget or val > 1000:
                 extracted_budget = normalize_budget(msg_body)
                 if extracted_budget >= 1000:
                     session["budget"] = extracted_budget
@@ -1078,6 +1152,21 @@ Conversion Examples to follow strictly:
 - '50k' -> 50000
 - '1.2 lakh' -> 120000
 NEVER output strings like '1.5 crore' or '1.5M' for the budget. ALWAYS output the final calculated raw integer.
+
+CRITICAL PARSING & CLARIFICATION RULES (DESI CURRENCY & SMART RECOVERY):
+1. **Desi Currency Conversion:** Users will use local South Asian slang for budgets (e.g., "lakh", "lac", "karor", "crore", "cr", "k", "caror", "cror"). You MUST convert these into raw integers before saving to JSON.
+   - Example: "7caror" or "7 cr" -> Save as 70000000
+   - Example: "1.5 lakh" or "dedh lakh" -> Save as 150000
+   - Example: "50k" -> Save as 50000
+   - Example: "dhai crore" -> Save as 25000000
+   - Example: "sawa lakh" -> Save as 125000
+   - Example: "paunay do crore" -> Save as 17500000 (0.75 * 2 * 10000000 is wrong; it means 2 crore minus quarter = 1.75 crore)
+2. **Proactive Confirmation (No Generic Fails):** If the user's input contains a typo or is slightly ambiguous but related to the funnel (e.g., "7 crr", "dhaii", "caror"), do NOT fail or output empty responses. You MUST engage them by asking for confirmation in a friendly way.
+   - Example: "Janab, kya aapka total budget 7 Crore hai? 🤔"
+   - Example: "Janab, aap dedh lakh matlab 1 lakh 50 hazaar ki baat kar rahe hain? 🤔"
+   - Example: "Janab, dhai crore matlab 2.5 Crore yani 2 Crore 50 Lakh, sahi samjha? 🤔"
+3. **NEVER Stay Silent on Budget Confusion:** If the budget input is completely unrecognizable, do NOT silently skip it or throw an error. Instead, ask: "Janab, main aapka budget theek se samajh nahi paya. Kya aap approximate amount batayein ge? (Misaal: 50 Lakh, 1 Crore) 🤔"
+
 - When ALL 4 variables are collected, YOU MUST OUTPUT EXACTLY THIS JSON FORMAT ON A NEW LINE:
 [PROPERTY_SEARCH: {{"bhk":<int>,"budget":<int>,"location":"<str>","purpose":"buy"|"rent"}}]
 """
