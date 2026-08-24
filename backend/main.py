@@ -2008,6 +2008,11 @@ STRICT RULES FOR YOUR RESPONSE:
                                             send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
                                             save_supabase_message(from_number, "user", msg_body, tenant_id)
                                             save_supabase_message(from_number, "assistant", ai_response, tenant_id)
+                                            
+                                            # HARD LOCK: If they are inspecting a property, stop here.
+                                            if session.get("state") == "INSPECTING_PROPERTY" or session.get("funnel_state") == "INSPECTING_PROPERTY":
+                                                return PlainTextResponse(content="OK", status_code=200)
+                                                
                                             return PlainTextResponse(content="OK", status_code=200)
 
                                     # --- STATE 2: INITIAL SEARCH / QUALIFICATION ---
@@ -2286,6 +2291,11 @@ STRICT ANTI-HALLUCINATION RULES:
                                             save_supabase_message(from_number, "user", msg_body, tenant_id)
                                             save_supabase_message(from_number, "assistant", ai_response, tenant_id)
                                             session["chat_history"].append({"role": "assistant", "content": ai_response})
+                                            
+                                            # HARD LOCK: If they are inspecting a property, stop here.
+                                            if session.get("state") == "INSPECTING_PROPERTY" or session.get("funnel_state") == "INSPECTING_PROPERTY":
+                                                return PlainTextResponse(content="OK", status_code=200)
+                                                
                                             return PlainTextResponse(content="OK", status_code=200)
 
                                     save_supabase_message(from_number, "user", msg_body, tenant_id)
@@ -2299,6 +2309,10 @@ STRICT ANTI-HALLUCINATION RULES:
                                     
                                     if whatsapp_token and ai_response: 
                                         send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
+                                        
+                                    # HARD LOCK: If they are inspecting a property, stop here.
+                                    if session.get("state") == "INSPECTING_PROPERTY" or session.get("funnel_state") == "INSPECTING_PROPERTY":
+                                        return PlainTextResponse(content="OK", status_code=200)
                                     
         return PlainTextResponse(content="OK", status_code=200)
     except Exception as e:
