@@ -1372,10 +1372,12 @@ async def process_whatsapp_data(data: dict):
                                     logger.info("New user detected. Sending Menu.")
                                     session = {"purpose": None, "bhk": None, "location": None, "budget": None, "agency_tag": None, "state": None, "intent": None, "greeting_done": True, "chat_history": []}
                                     
-                                    # Pattern: "mujhy [Agency_Name] ki properties"
-                                    match = regex_module.search(r'mujhy\s+(.*?)\s+ki\s+properties', msg_body, regex_module.IGNORECASE)
+                                    # Pattern: "mujhe [Agency_Name] ki properties"
+                                    match = regex_module.search(r'(?:mujhe|mujhy|mujhay)\s+(.*?)\s+ki\s+propert', msg_body, regex_module.IGNORECASE)
                                     if match:
-                                        session["agency_tag"] = match.group(1).strip().replace("-", "_").replace(" ", "_")
+                                        raw_tag = match.group(1).strip()
+                                        session["agency_tag"] = raw_tag.replace("-", "_").replace(" ", "_")
+                                        print(f"Dynamically locked agency_tag: {session['agency_tag']}")
                                         logger.info(f"Extracted agency_tag from regex: {session['agency_tag']}")
                                     else:
                                         session["agency_tag"] = None
