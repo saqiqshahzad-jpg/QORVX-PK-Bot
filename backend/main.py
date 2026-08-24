@@ -126,23 +126,22 @@ def transcribe_audio_groq(file_path: str):
         logger.error(f"Groq Whisper Error: {e}")
         raise e
 
-def robust_chat_completion(messages_array, temperature, max_tokens):
+def robust_chat_completion(messages_array, temperature, max_tokens, json_mode=False):
     try:
-        return client.chat.completions.create(
-            model=MODEL_ID,
-            temperature=temperature,
-            max_tokens=512,
-            messages=messages_array
-        )
+        kwargs = {
+            "model": MODEL_ID,
+            "temperature": temperature,
+            "max_tokens": 512,
+            "messages": messages_array
+        }
+        if json_mode:
+            kwargs["response_format"] = {"type": "json_object"}
+        return client.chat.completions.create(**kwargs)
     except Exception as e:
         logger.info(f"Primary LLM failed ({str(e)}), trying fallback...")
         try:
-            return client.chat.completions.create(
-                model=FALLBACK_MODEL,
-                temperature=temperature,
-                max_tokens=512,
-                messages=messages_array
-            )
+            kwargs["model"] = FALLBACK_MODEL
+            return client.chat.completions.create(**kwargs)
         except Exception as e2:
             logger.info(f"Fallback LLM failed: {str(e2)}")
             # Return a fake completion object so the bot never crashes
@@ -1224,7 +1223,8 @@ async def process_whatsapp_data(data: dict):
                                 # --- INTELLIGENT ROUTER & SUPABASE PERSISTENCE ---
                                 # session is already fetched above for DEDUP check
 
-                                if session is not None and session.get("funnel_state") == "AWAITING_VISIT_INFO":
+                                phone_match = regex_module.search(r'(?:\+92|0)[3]\d{2}[\s\-]?\d{7}', msg_body)
+                                if (session is not None and session.get("funnel_state") == "AWAITING_VISIT_INFO") or phone_match:
                                     logger.info(f"Received visit info from {from_number}: {msg_body}")
                                     try:
                                         workspace = GoogleSpreadsheetClient(tenant_id, booking_sheet_name, property_sheet_name)
@@ -1247,7 +1247,7 @@ async def process_whatsapp_data(data: dict):
                                     session["last_interaction"] = time.time()
                                     active_sessions.append((from_number, session, tenant_id))
                                     
-                                    reply_text = "Bohot shukriya! Aap ki details aur visit request hamare paas save ho gayi hai. Hamara agent jald aap se confirm karne ke liye rabta karega. 🤝"
+                                    reply_text = "Bohot shukriya! Aap ki details aur visit request hamare paas save ho gayi hai. Hamara agent jald aap se rabta karega. 🤝"
                                     send_whatsapp_text(tenant_id, from_number, reply_text, whatsapp_token)
                                     save_supabase_message(from_number, "user", msg_body, tenant_id)
                                     save_supabase_message(from_number, "assistant", reply_text, tenant_id)
@@ -1860,6 +1860,9 @@ STRICT RULES FOR YOUR RESPONSE:
 5. GENDER-NEUTRAL: Always use 'Janab' or 'Aap'. NEVER use 'Sir' or 'Bhai'.
 5. TONE: 100% Conversational and natural Roman Urdu. Like a helpful human, not a robot.
 6. OFF-TOPIC RECOVERY: Agar user koi aisi baat kare jo property se related nahi hai, toh politely uski baat ka short jawab dein aur aakhir mein add karein: "Waise janab, jo property maine aapko abhi dikhayi hai, kya aap uska visit schedule karna chahenge?"
+7. JSON FORMAT REQUIRED: You must respond ONLY in strictly valid JSON format with these exact keys:
+- "ai_response": Your conversational response in Roman Urdu.
+- "visit_intent_detected": (boolean) If the user's message expresses ANY desire to visit, see, tour, or inspect the property in person (e.g., 'visit kb kr skte', 'dekhna hai'), set this to true. Otherwise false.
 """
                                             # Build System Prompt
                                             system_msg = {"role": "system", "content": QNA_PROMPT}
@@ -1868,8 +1871,23 @@ STRICT RULES FOR YOUR RESPONSE:
                                             llm_messages = [system_msg] + session.get("chat_history", [])
                                             
                                             # Call LLM with full context
-                                            completion = robust_chat_completion(llm_messages, 0.3, 200)
-                                            ai_response = completion.choices[0].message.content
+                                            completion = robust_chat_completion(llm_messages, 0.3, 200, json_mode=True)
+                                            try:
+                                                import json
+                                                extracted_data = json.loads(completion.choices[0].message.content)
+                                                ai_response = extracted_data.get("ai_response", "")
+                                                
+                                                if extracted_data.get("visit_intent_detected") is True:
+                                                    session["state"] = "SCHEDULING_VISIT"
+                                                    session["funnel_state"] = "AWAITING_VISIT_INFO"
+                                                    ai_response = "Behtareen! Is property ka physical visit arrange karne ke liye, barah-e-karam apna Pura Naam aur Phone Number share kardein taake hamara agent aapse rabta kar le. 📅🤝"
+                                                    send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
+                                                    save_supabase_message(from_number, "user", msg_body, tenant_id)
+                                                    save_supabase_message(from_number, "assistant", ai_response, tenant_id)
+                                                    return PlainTextResponse(content="OK", status_code=200)
+                                            except Exception as e:
+                                                logger.error(f"Failed to parse QNA JSON: {e}")
+                                                ai_response = completion.choices[0].message.content
                                             
                                             # CRITICAL FAILSAFE: Never send empty string to Meta API
                                             if not ai_response or not str(ai_response).strip():
@@ -2049,6 +2067,9 @@ STRICT ANTI-HALLUCINATION RULES:
 18. SPAM / GIBBERISH / TYPOS: If the user sends a random string of characters (like "asdfgh"), only emojis, or an empty message, DO NOT try to parse it. Respond politely with: "Janab, main aapki baat samajh nahi paya, barah-e-karam property ke hawale se apna sawal poochein."
 19. DOUBLE INTENT (MIXED REQUESTS): If the user asks to do two things at once (e.g., "Mujhe plot lena hai aur flat bechna hai"), ALWAYS prioritize the FIRST task mentioned. Acknowledge both but steer the conversation to solve the first one first. (e.g., "Zaroor! Pehle hum aapke naye plot ki details save kar lete hain, phir flat ki baat karenge. Plot ke liye aapka budget kya hai?")
 20. OUT OF SYLLABUS (OFF-TOPIC): If the user asks questions unrelated to real estate, properties, or our agency (e.g., weather, politics, general AI questions), STRICTLY REFUSE TO ANSWER. Respond politely: "Janab, main ek Real Estate Assistant hoon. Main sirf properties aur real estate ke hawale se aapki rehnumai kar sakta hoon. Batayein, aap kis type ki property dekh rahe hain?"
+21. JSON FORMAT REQUIRED: You must respond ONLY in strictly valid JSON format with these exact keys:
+- "ai_response": Your conversational response in Roman Urdu.
+- "visit_intent_detected": (boolean) If the user's message expresses ANY desire to visit, see, tour, or inspect the property in person (e.g., 'visit kb kr skte', 'dekhna hai'), set this to true. Otherwise false.
 """
                                             if agency_profile:
                                                 address = agency_profile.get("Address", "N/A")
@@ -2057,8 +2078,23 @@ STRICT ANTI-HALLUCINATION RULES:
                                                 about_us = agency_profile.get("About_Us", "N/A")
                                                 DYNAMIC_PROMPT += f"\nCRITICAL CONTEXT: You are currently representing the agency '{agency_name}'. If the user asks about our office, owner, or contact info, use ONLY these details: Address: {address}, Phone: {phone}, Email: {email}. About us: {about_us}."
 
-                                            completion = robust_chat_completion([{"role": "system", "content": DYNAMIC_PROMPT}], 0.3, 150)
-                                            ai_response = completion.choices[0].message.content
+                                            completion = robust_chat_completion([{"role": "system", "content": DYNAMIC_PROMPT}], 0.3, 150, json_mode=True)
+                                            try:
+                                                import json
+                                                extracted_data = json.loads(completion.choices[0].message.content)
+                                                ai_response = extracted_data.get("ai_response", "")
+                                                
+                                                if extracted_data.get("visit_intent_detected") is True:
+                                                    session["state"] = "SCHEDULING_VISIT"
+                                                    session["funnel_state"] = "AWAITING_VISIT_INFO"
+                                                    ai_response = "Behtareen! Is property ka physical visit arrange karne ke liye, barah-e-karam apna Pura Naam aur Phone Number share kardein taake hamara agent aapse rabta kar le. 📅🤝"
+                                                    send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
+                                                    save_supabase_message(from_number, "user", msg_body, tenant_id)
+                                                    save_supabase_message(from_number, "assistant", ai_response, tenant_id)
+                                                    return PlainTextResponse(content="OK", status_code=200)
+                                            except Exception as e:
+                                                logger.error(f"Failed to parse DYNAMIC JSON: {e}")
+                                                ai_response = completion.choices[0].message.content
                                             
                                             # Intercept Urgent Escalation
                                             if ai_response and "senior agent ko forward" in ai_response.lower():
