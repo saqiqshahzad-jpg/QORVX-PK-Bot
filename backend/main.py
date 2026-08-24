@@ -2010,6 +2010,34 @@ STRICT RULES FOR YOUR RESPONSE:
                                     is_plot = session.get("property_type") == "plot"
                                     has_bhk = True if is_plot else bool(session.get("bhk"))
                                     
+                                    # ═══════════════════════════════════════════════════════════════
+                                    # SMALL-TALK FAST-TRACK INTERCEPTOR
+                                    # Prevents re-triggering DB search when user says "ok", "thanks", etc.
+                                    # ═══════════════════════════════════════════════════════════════
+                                    SMALL_TALK_PATTERNS = [
+                                        "ok", "okay", "oky", "oki", "k", "theek", "theek hai", "thik", "thik hai",
+                                        "thanks", "thank you", "shukriya", "shukria", "meherbani",
+                                        "yes", "ji", "jee", "haan", "han", "ha", "bilkul", "zaroor",
+                                        "no", "nahi", "nhi", "na", "mat",
+                                        "hmm", "hm", "achha", "acha", "accha", "alright",
+                                        "bye", "allah hafiz", "khuda hafiz", "goodbye",
+                                        "welcome", "nice", "great", "perfect", "done", "bas",
+                                        "koi baat nahi", "np", "no problem"
+                                    ]
+                                    is_small_talk_fast = msg_clean in SMALL_TALK_PATTERNS or (
+                                        len(msg_clean.split()) <= 2 and any(msg_clean.startswith(p) for p in SMALL_TALK_PATTERNS)
+                                    )
+                                    
+                                    # If all params fulfilled AND message is obvious small-talk, reply politely and skip search
+                                    if is_small_talk_fast and session.get("state") != "INSPECTING_PROPERTY" and session.get("purpose") and session.get("location") and session.get("budget"):
+                                        logger.info(f"Small-talk fast-track intercepted: '{msg_clean}'. Skipping DB search.")
+                                        small_talk_reply = "Jee janab, aapki kisi bhi aur zaroorat ke liye main hazir hoon! Naya search karna ho toh 'Menu' likh kar bhejein. 🤝"
+                                        send_whatsapp_text(tenant_id, from_number, small_talk_reply, whatsapp_token)
+                                        save_supabase_message(from_number, "user", msg_body, tenant_id)
+                                        save_supabase_message(from_number, "assistant", small_talk_reply, tenant_id)
+                                        session["chat_history"].append({"role": "assistant", "content": small_talk_reply})
+                                        return PlainTextResponse(content="OK", status_code=200)
+
                                     if session.get("state") != "INSPECTING_PROPERTY" and session.get("purpose") and session.get("property_type") and session.get("location") and has_bhk and session.get("budget"):
                                         logger.info("All 5 funnel parameters satisfied. Executing database query.")
                                         
@@ -2171,8 +2199,14 @@ STRICT ANTI-HALLUCINATION RULES:
 18. SPAM / GIBBERISH / TYPOS: If the user sends a random string of characters (like "asdfgh"), only emojis, or an empty message, DO NOT try to parse it. Respond politely with: "Janab, main aapki baat samajh nahi paya, barah-e-karam property ke hawale se apna sawal poochein."
 19. DOUBLE INTENT (MIXED REQUESTS): If the user asks to do two things at once (e.g., "Mujhe plot lena hai aur flat bechna hai"), ALWAYS prioritize the FIRST task mentioned. Acknowledge both but steer the conversation to solve the first one first. (e.g., "Zaroor! Pehle hum aapke naye plot ki details save kar lete hain, phir flat ki baat karenge. Plot ke liye aapka budget kya hai?")
 20. OUT OF SYLLABUS (OFF-TOPIC): If the user asks questions unrelated to real estate, properties, or our agency (e.g., weather, politics, general AI questions), STRICTLY REFUSE TO ANSWER. Respond politely: "Janab, main ek Real Estate Assistant hoon. Main sirf properties aur real estate ke hawale se aapki rehnumai kar sakta hoon. Batayein, aap kis type ki property dekh rahe hain?"
-21. JSON FORMAT REQUIRED: You must respond ONLY in strictly valid JSON format with these exact keys:
+21. INTENT CLASSIFICATION (CRITICAL): You MUST classify each user message into one of these three intents:
+   - "small_talk": If the user is just greeting, saying "ok", "thanks", "yes", "jee", "shukriya", "bye", or making general filler conversation NOT related to property requirements. If intent is 'small_talk', write your response in ai_response but DO NOT generate or update any property parameters.
+   - "clarify": If the user's input is highly ambiguous, confusing, or has weird typos (e.g., "7 crr", "dhaii", unrecognizable text), and you need to ask for confirmation. Write a clarification question in ai_response and DO NOT guess missing parameters.
+   - "search": If the user is actively providing property requirements (budget, location, BHK, purpose, property type) or asking to see properties. This is the default intent for property-related messages.
+   RULE: If intent_action is 'small_talk' or 'clarify', DO NOT output property parameter updates. Just write a natural conversational reply.
+22. JSON FORMAT REQUIRED: You must respond ONLY in strictly valid JSON format with these exact keys:
 - "ai_response": Your conversational response in Roman Urdu.
+- "intent_action": (string) One of: "small_talk", "clarify", or "search".
 - "visit_intent_detected": (boolean) If the user's message expresses ANY desire to visit, see, tour, or inspect the property in person (e.g., 'visit kb kr skte', 'dekhna hai'), set this to true. Otherwise false.
 """
                                             if agency_profile:
@@ -2199,6 +2233,30 @@ STRICT ANTI-HALLUCINATION RULES:
                                             except Exception as e:
                                                 logger.error(f"Failed to parse DYNAMIC JSON: {e}")
                                                 ai_response = completion.choices[0].message.content
+                                                extracted_data = {}
+                                            
+                                            # ═══════════════════════════════════════════════════════════════
+                                            # INTENT ROUTING: small_talk / clarify / search
+                                            # ═══════════════════════════════════════════════════════════════
+                                            intent = extracted_data.get("intent_action", "search") if isinstance(extracted_data, dict) else "search"
+                                            logger.info(f"[INTENT ROUTER] Classified intent: '{intent}' for message: '{msg_body[:50]}'")
+                                            
+                                            if intent in ["small_talk", "clarify"]:
+                                                # Small-talk or clarification: send conversational reply, do NOT query DB
+                                                reply_text = ai_response if ai_response else "Jee janab, main hazir hoon! 🤝"
+                                                
+                                                # CRITICAL FAILSAFE: Never send empty string to Meta API
+                                                if not reply_text or not str(reply_text).strip():
+                                                    reply_text = "Jee janab, main hazir hoon. Aapki kya madad kar sakta hoon? 🤝"
+                                                
+                                                send_whatsapp_text(tenant_id, from_number, reply_text, whatsapp_token)
+                                                save_supabase_message(from_number, "user", msg_body, tenant_id)
+                                                save_supabase_message(from_number, "assistant", reply_text, tenant_id)
+                                                session["chat_history"].append({"role": "assistant", "content": reply_text})
+                                                logger.info(f"[INTENT ROUTER] '{intent}' handled. Skipped DB search. Reply sent.")
+                                                return PlainTextResponse(content="OK", status_code=200)
+                                            
+                                            # intent == "search" -> continue normal qualification flow below
                                             
                                             # Intercept Urgent Escalation
                                             if ai_response and "senior agent ko forward" in ai_response.lower():
