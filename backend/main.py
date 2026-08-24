@@ -18,6 +18,7 @@ import requests
 import base64
 import io
 import re
+import re as regex_module
 import datetime
 import time
 import pytz
@@ -1264,7 +1265,7 @@ async def process_whatsapp_data(data: dict):
                                     
                                     # --- EXTRACT AGENCY TAG FROM INITIAL MESSAGE ---
                                     # Pattern: "mujhe [Agency_Name] ki properties"
-                                    import re
+                                    # import re
                                     match = re.search(r"mujhe\s+(.+?)\s+ki properties", msg_body, re.IGNORECASE)
                                     if match:
                                         raw_tag = match.group(1).strip()
@@ -1766,7 +1767,7 @@ Action: Greet them back politely. Acknowledge their past interest naturally. Ask
                                         from datetime import datetime
                                         
                                         # 1. Extract Email
-                                        email_match = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', msg_body)
+                                        email_match = regex_module.search(r'[\w\.-]+@[\w\.-]+\.\w+', msg_body)
                                         email = email_match.group(0) if email_match else "N/A"
                                         
                                         # 2. Extract Name cleanly (strip email and punctuation)
@@ -1808,7 +1809,7 @@ Action: Greet them back politely. Acknowledge their past interest naturally. Ask
                                             session["state"] = None  # Reset state to allow new search
                                         else:
                                             # Fallback Lead Capture Routing
-                                            email_match = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', msg_body)
+                                            email_match = regex_module.search(r'[\w\.-]+@[\w\.-]+\.\w+', msg_body)
                                             if email_match:
                                                 client_email = email_match.group(0)
                                                 client_name = "Client"  # Simple fallback
