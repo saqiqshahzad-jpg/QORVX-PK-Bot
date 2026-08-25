@@ -69,8 +69,8 @@ RESEND_API_KEY = os.environ.get("RESEND_API_KEY")
 MY_VERIFY_TOKEN = os.environ.get("WHATSAPP_VERIFY_TOKEN", "ALAAUDIN_SECRET_TOKEN")
 
 client = OpenAI(api_key=OPENROUTER_API_KEY, base_url="https://openrouter.ai/api/v1", max_retries=0)
-MODEL_ID = "openrouter/free"
-FALLBACK_MODEL = "openai/gpt-oss-20b:free"
+MODEL_ID = "google/gemini-2.0-flash-exp:free"
+FALLBACK_MODEL = "google/gemini-1.5-flash:free"
 
 # =========================================================================================
 # 🎙️ AUDIO MESSAGE PROCESSING (Meta Download + OpenAI Whisper)
@@ -1831,7 +1831,18 @@ Action: Greet them back politely. Acknowledge their past interest naturally. Ask
                                                 max_tokens=512
                                             )
                                             import json
-                                            extracted_data = json.loads(completion.choices[0].message.content)
+                                            import re
+                                            llm_text = completion.choices[0].message.content or ""
+                                            json_match = re.search(r'\{.*\}', llm_text, re.DOTALL)
+                                            if not json_match:
+                                                print("WARNING: No JSON block found in LLM response. Using safe fallback.")
+                                                extracted_data = {
+                                                    "intent_action": "qa", 
+                                                    "reply_text": "Janab, main aapki baat properly samajh nahi paya, barah-e-karam dobara batayein.",
+                                                    "ai_response": "Janab, main aapki baat properly samajh nahi paya, barah-e-karam dobara batayein."
+                                                }
+                                            else:
+                                                extracted_data = json.loads(json_match.group(0))
                                             
                                             # --- GOOGLE SHEET APPEND LOGIC ---
                                             import datetime
@@ -1975,7 +1986,18 @@ STRICT RULES FOR YOUR RESPONSE:
                                             completion = robust_chat_completion(llm_messages, 0.3, 200, json_mode=True)
                                             try:
                                                 import json
-                                                extracted_data = json.loads(completion.choices[0].message.content)
+                                                import re
+                                                llm_text = completion.choices[0].message.content or ""
+                                                json_match = re.search(r'\{.*\}', llm_text, re.DOTALL)
+                                                if not json_match:
+                                                    print("WARNING: No JSON block found in LLM response. Using safe fallback.")
+                                                    extracted_data = {
+                                                        "intent_action": "qa", 
+                                                        "reply_text": "Janab, main aapki baat properly samajh nahi paya, barah-e-karam dobara batayein.",
+                                                        "ai_response": "Janab, main aapki baat properly samajh nahi paya, barah-e-karam dobara batayein."
+                                                    }
+                                                else:
+                                                    extracted_data = json.loads(json_match.group(0))
                                                 ai_response = extracted_data.get("ai_response", "")
                                                 
                                                 if extracted_data.get("visit_intent_detected") is True:
@@ -2222,7 +2244,18 @@ STRICT ANTI-HALLUCINATION RULES:
                                             completion = robust_chat_completion([{"role": "system", "content": DYNAMIC_PROMPT}], 0.3, 150, json_mode=True)
                                             try:
                                                 import json
-                                                extracted_data = json.loads(completion.choices[0].message.content)
+                                                import re
+                                                llm_text = completion.choices[0].message.content or ""
+                                                json_match = re.search(r'\{.*\}', llm_text, re.DOTALL)
+                                                if not json_match:
+                                                    print("WARNING: No JSON block found in LLM response. Using safe fallback.")
+                                                    extracted_data = {
+                                                        "intent_action": "qa", 
+                                                        "reply_text": "Janab, main aapki baat properly samajh nahi paya, barah-e-karam dobara batayein.",
+                                                        "ai_response": "Janab, main aapki baat properly samajh nahi paya, barah-e-karam dobara batayein."
+                                                    }
+                                                else:
+                                                    extracted_data = json.loads(json_match.group(0))
                                                 ai_response = extracted_data.get("ai_response", "")
                                                 
                                                 if extracted_data.get("visit_intent_detected") is True:
