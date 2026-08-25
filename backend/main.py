@@ -1819,6 +1819,8 @@ Action: Greet them back politely. Acknowledge their past interest naturally. Ask
                                         - Size: Format clearly with the unit (e.g., "1 Kanal", "20 Marla").
                                         
                                         If a value is missing, output "N/A" (or 0 for integers).
+
+                                        CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON starting with {{ and ending with }}. DO NOT output any conversational text, greetings, or markdown formatting like ```json. Your entire response must be parseable by Python's json.loads().
                                         """
                                         
                                         extracted_data = {}
@@ -1833,13 +1835,25 @@ Action: Greet them back politely. Acknowledge their past interest naturally. Ask
                                             import json
                                             import re
                                             llm_text = completion.choices[0].message.content or ""
-                                            json_match = re.search(r'\{.*\}', llm_text, re.DOTALL)
+                                            
+                                            # Clean markdown backticks if the model hallucinates them
+                                            cleaned_text = llm_text.strip()
+                                            if cleaned_text.startswith("```json"):
+                                                cleaned_text = cleaned_text[7:]
+                                            if cleaned_text.startswith("```"):
+                                                cleaned_text = cleaned_text[3:]
+                                            if cleaned_text.endswith("```"):
+                                                cleaned_text = cleaned_text[:-3]
+                                            cleaned_text = cleaned_text.strip()
+                                            
+                                            # Now search and parse
+                                            json_match = re.search(r'\{.*\}', cleaned_text, re.DOTALL)
                                             if not json_match:
                                                 print("WARNING: No JSON block found in LLM response. Using safe fallback.")
                                                 extracted_data = {
                                                     "intent_action": "qa", 
-                                                    "reply_text": "Janab, main aapki baat properly samajh nahi paya, barah-e-karam dobara batayein.",
-                                                    "ai_response": "Janab, main aapki baat properly samajh nahi paya, barah-e-karam dobara batayein."
+                                                    "reply_text": "Maazrat janab, main thora confuse ho gaya. Barah-e-karam apna jawab dobara wazeh karke batayein.",
+                                                    "ai_response": "Maazrat janab, main thora confuse ho gaya. Barah-e-karam apna jawab dobara wazeh karke batayein."
                                                 }
                                             else:
                                                 extracted_data = json.loads(json_match.group(0))
@@ -1975,6 +1989,8 @@ STRICT RULES FOR YOUR RESPONSE:
 7. JSON FORMAT REQUIRED: You must respond ONLY in strictly valid JSON format with these exact keys:
 - "ai_response": Your conversational response in Roman Urdu.
 - "visit_intent_detected": (boolean) If the user's message expresses ANY desire to visit, see, tour, or inspect the property in person (e.g., 'visit kb kr skte', 'dekhna hai'), set this to true. Otherwise false.
+
+CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON starting with {{ and ending with }}. DO NOT output any conversational text, greetings, or markdown formatting like ```json. Your entire response must be parseable by Python's json.loads().
 """
                                             # Build System Prompt
                                             system_msg = {"role": "system", "content": QNA_PROMPT}
@@ -1988,13 +2004,25 @@ STRICT RULES FOR YOUR RESPONSE:
                                                 import json
                                                 import re
                                                 llm_text = completion.choices[0].message.content or ""
-                                                json_match = re.search(r'\{.*\}', llm_text, re.DOTALL)
+                                                
+                                                # Clean markdown backticks if the model hallucinates them
+                                                cleaned_text = llm_text.strip()
+                                                if cleaned_text.startswith("```json"):
+                                                    cleaned_text = cleaned_text[7:]
+                                                if cleaned_text.startswith("```"):
+                                                    cleaned_text = cleaned_text[3:]
+                                                if cleaned_text.endswith("```"):
+                                                    cleaned_text = cleaned_text[:-3]
+                                                cleaned_text = cleaned_text.strip()
+                                                
+                                                # Now search and parse
+                                                json_match = re.search(r'\{.*\}', cleaned_text, re.DOTALL)
                                                 if not json_match:
                                                     print("WARNING: No JSON block found in LLM response. Using safe fallback.")
                                                     extracted_data = {
                                                         "intent_action": "qa", 
-                                                        "reply_text": "Janab, main aapki baat properly samajh nahi paya, barah-e-karam dobara batayein.",
-                                                        "ai_response": "Janab, main aapki baat properly samajh nahi paya, barah-e-karam dobara batayein."
+                                                        "reply_text": "Maazrat janab, main thora confuse ho gaya. Barah-e-karam apna jawab dobara wazeh karke batayein.",
+                                                        "ai_response": "Maazrat janab, main thora confuse ho gaya. Barah-e-karam apna jawab dobara wazeh karke batayein."
                                                     }
                                                 else:
                                                     extracted_data = json.loads(json_match.group(0))
@@ -2233,6 +2261,8 @@ STRICT ANTI-HALLUCINATION RULES:
 - "ai_response": Your conversational response in Roman Urdu.
 - "intent_action": (string) One of: "small_talk", "qa", "clarify", or "search".
 - "visit_intent_detected": (boolean) If the user's message expresses ANY desire to visit, see, tour, or inspect the property in person (e.g., 'visit kb kr skte', 'dekhna hai'), set this to true. Otherwise false.
+
+CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON starting with {{ and ending with }}. DO NOT output any conversational text, greetings, or markdown formatting like ```json. Your entire response must be parseable by Python's json.loads().
 """
                                             if agency_profile:
                                                 address = agency_profile.get("Address", "N/A")
@@ -2246,13 +2276,25 @@ STRICT ANTI-HALLUCINATION RULES:
                                                 import json
                                                 import re
                                                 llm_text = completion.choices[0].message.content or ""
-                                                json_match = re.search(r'\{.*\}', llm_text, re.DOTALL)
+                                                
+                                                # Clean markdown backticks if the model hallucinates them
+                                                cleaned_text = llm_text.strip()
+                                                if cleaned_text.startswith("```json"):
+                                                    cleaned_text = cleaned_text[7:]
+                                                if cleaned_text.startswith("```"):
+                                                    cleaned_text = cleaned_text[3:]
+                                                if cleaned_text.endswith("```"):
+                                                    cleaned_text = cleaned_text[:-3]
+                                                cleaned_text = cleaned_text.strip()
+                                                
+                                                # Now search and parse
+                                                json_match = re.search(r'\{.*\}', cleaned_text, re.DOTALL)
                                                 if not json_match:
                                                     print("WARNING: No JSON block found in LLM response. Using safe fallback.")
                                                     extracted_data = {
                                                         "intent_action": "qa", 
-                                                        "reply_text": "Janab, main aapki baat properly samajh nahi paya, barah-e-karam dobara batayein.",
-                                                        "ai_response": "Janab, main aapki baat properly samajh nahi paya, barah-e-karam dobara batayein."
+                                                        "reply_text": "Maazrat janab, main thora confuse ho gaya. Barah-e-karam apna jawab dobara wazeh karke batayein.",
+                                                        "ai_response": "Maazrat janab, main thora confuse ho gaya. Barah-e-karam apna jawab dobara wazeh karke batayein."
                                                     }
                                                 else:
                                                     extracted_data = json.loads(json_match.group(0))
