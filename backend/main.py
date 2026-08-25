@@ -69,8 +69,8 @@ RESEND_API_KEY = os.environ.get("RESEND_API_KEY")
 MY_VERIFY_TOKEN = os.environ.get("WHATSAPP_VERIFY_TOKEN", "ALAAUDIN_SECRET_TOKEN")
 
 client = OpenAI(api_key=OPENROUTER_API_KEY, base_url="https://openrouter.ai/api/v1", max_retries=0)
-MODEL_ID = "openai/gpt-oss-20b"
-FALLBACK_MODEL = "openai/gpt-oss-20b"
+MODEL_ID = "qwen/qwen-2-7b-instruct:free"
+FALLBACK_MODEL = "mistralai/mistral-7b-instruct:free"
 
 # =========================================================================================
 # 🎙️ AUDIO MESSAGE PROCESSING (Meta Download + OpenAI Whisper)
@@ -1468,11 +1468,10 @@ async def process_whatsapp_data(data: dict):
                                     RETURNING_PROMPT = f"""User is returning. Past context: {session}.
 User message: "{msg_body}"
 Action: Greet them back politely. Acknowledge their past interest naturally. Ask if they want to continue with that or see the 'Menu' for other options. Keep it short and professional in Roman Urdu."""
-                                    completion = client.chat.completions.create(
-                                        model=MODEL_ID,
-                                        messages=[{"role": "system", "content": RETURNING_PROMPT}],
-                                        temperature=0.3,
-                                        max_tokens=512
+                                    completion = robust_chat_completion(
+                                        [{"role": "system", "content": RETURNING_PROMPT}],
+                                        0.3,
+                                        512
                                     )
                                     ai_response = completion.choices[0].message.content
                                     send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
@@ -2202,10 +2201,98 @@ CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON starti
                                             session["purpose"] = None
 
                                         # ═══════════════════════════════════════════════════════════════
-                                        # 🧠 DYNAMIC LLM-POWERED QUALIFICATION (INTENT-SHIFT AWARE)
+                                        # ⚡ LOCAL REGEX-FIRST INTENT ROUTER (SPEED OPTIMIZATION)
+                                        # Handles simple messages locally without calling OpenRouter LLM
                                         # ═══════════════════════════════════════════════════════════════
                                         if session.get("state") != "INSPECTING_PROPERTY":
-                                            logger.info(f"Funnel Incomplete. Using Dynamic LLM Qualification Prompt.")
+                                            # --- LOCAL SMALL-TALK FAST PATH ---
+                                            LOCAL_GREETINGS = ["salam", "hello", "hi", "assalam", "hy", "aoa", "wa alaikum"]
+                                            LOCAL_THANKS = ["thanks", "thank you", "shukriya", "shukria", "meherbani"]
+                                            LOCAL_AFFIRMATIVES = ["ok", "okay", "oky", "oki", "k", "theek", "theek hai", "thik", "thik hai", "yes", "ji", "jee", "haan", "han", "ha", "bilkul", "zaroor"]
+                                            LOCAL_NEGATIVES = ["no", "nahi", "nhi", "na", "mat"]
+                                            LOCAL_FILLERS = ["hmm", "hm", "achha", "acha", "accha", "alright", "nice", "great", "perfect", "done", "bas", "koi baat nahi", "np", "no problem"]
+                                            LOCAL_FAREWELL = ["bye", "allah hafiz", "khuda hafiz", "goodbye", "welcome"]
+
+                                            local_intent_handled = False
+
+                                            # Check if the message is pure small-talk/greeting that can skip LLM entirely
+                                            if msg_clean in LOCAL_GREETINGS or any(msg_clean.startswith(g) for g in LOCAL_GREETINGS):
+                                                if not session.get("purpose"):
+                                                    # New user greeting without context: ask what they need
+                                                    local_reply = "Walaikum Assalam! Janab, aap kya dekhna chahte hain — kharidna, rent, ya bechna? 🏡"
+                                                else:
+                                                    local_reply = "Jee janab, main hazir hoon! Boliye, kya madad chahiye? 🤝"
+                                                local_intent_handled = True
+
+                                            elif msg_clean in LOCAL_THANKS:
+                                                local_reply = "Shukriya janab! Kisi bhi waqt madad chahiye toh 'Menu' likh kar bhejein. 🤝"
+                                                local_intent_handled = True
+
+                                            elif msg_clean in LOCAL_FAREWELL:
+                                                local_reply = "Allah Hafiz janab! Jab bhi zaroorat ho, hum hazir hain. 🤝"
+                                                local_intent_handled = True
+
+                                            elif msg_clean in LOCAL_AFFIRMATIVES or msg_clean in LOCAL_FILLERS:
+                                                # If we have purpose but missing other params, guide them
+                                                if session.get("purpose") and not session.get("location"):
+                                                    local_reply = "Jee janab! Barah-e-karam batayein, aap kis shehar ya area mein property dekhna chahte hain? 📍"
+                                                elif session.get("location") and not session.get("budget"):
+                                                    local_reply = "Behtareen! Janab, aapka approximate budget kya hai? 💰"
+                                                elif session.get("location") and session.get("budget") and not session.get("bhk") and session.get("property_type") != "plot":
+                                                    local_reply = "Zaroor! Kitne BHK ya rooms chahiye? 🛏️"
+                                                else:
+                                                    local_reply = "Jee janab, main hazir hoon! Naya search karna ho toh 'Menu' likh kar bhejein. 🤝"
+                                                local_intent_handled = True
+
+                                            elif msg_clean in LOCAL_NEGATIVES:
+                                                local_reply = "Koi masla nahi janab! Jab bhi zaroorat ho, 'Menu' likh kar bhejein. 🤝"
+                                                local_intent_handled = True
+
+                                            # --- LOCAL PURPOSE DETECTION (Buy/Rent keywords) ---
+                                            elif not session.get("purpose") and any(kw in msg_clean for kw in ["buy", "kharidna", "purchase", "khareedna", "kharidni"]):
+                                                session["purpose"] = "buy"
+                                                local_reply = "Behtareen! Janab, aap kis shehar ya specific society mein property dekhna chahte hain? 📍"
+                                                local_intent_handled = True
+
+                                            elif not session.get("purpose") and any(kw in msg_clean for kw in ["rent", "kiraya", "rent pr", "rent par", "kiray"]):
+                                                session["purpose"] = "rent"
+                                                local_reply = "Zaroor! Janab, rent ke liye kis shehar ya area mein option dekh rahe hain? 📍"
+                                                local_intent_handled = True
+
+                                            # --- LOCAL LOCATION-ONLY REPLY (short answer to location question) ---
+                                            elif not session.get("location") and session.get("purpose") and len(msg_body.split()) <= 3:
+                                                # Check if AI just asked for location
+                                                last_ai_content_lower = ""
+                                                if session.get("chat_history"):
+                                                    for row in reversed(session["chat_history"]):
+                                                        if row["role"] == "assistant":
+                                                            last_ai_content_lower = row["content"].lower()
+                                                            break
+                                                if any(kw in last_ai_content_lower for kw in ["shehar", "area", "location", "kidhar", "city", "society", "jagah"]):
+                                                    for kw in PK_LOCATION_KEYWORDS:
+                                                        if kw in msg_clean:
+                                                            session["location"] = msg_body.strip().title()
+                                                            if session.get("property_type") == "plot" or session.get("bhk"):
+                                                                local_reply = f"Behtareen! {session['location']} mein dekh lete hain. Aapka approximate budget kya hai? 💰"
+                                                            else:
+                                                                local_reply = f"Behtareen! {session['location']} mein dekh lete hain. Kitne BHK ya rooms chahiye? 🛏️"
+                                                            local_intent_handled = True
+                                                            break
+
+                                            if local_intent_handled:
+                                                logger.info(f"⚡ [LOCAL FAST-PATH] Handled locally without LLM: '{msg_clean[:40]}'")
+                                                send_whatsapp_text(tenant_id, from_number, local_reply, whatsapp_token)
+                                                save_supabase_message(from_number, "user", msg_body, tenant_id)
+                                                save_supabase_message(from_number, "assistant", local_reply, tenant_id)
+                                                session["chat_history"].append({"role": "assistant", "content": local_reply})
+                                                return PlainTextResponse(content="OK", status_code=200)
+
+                                        # ═══════════════════════════════════════════════════════════════
+                                        # 🧠 DYNAMIC LLM-POWERED QUALIFICATION (INTENT-SHIFT AWARE)
+                                        # Only reached if local regex rules above did NOT handle the message
+                                        # ═══════════════════════════════════════════════════════════════
+                                        if session.get("state") != "INSPECTING_PROPERTY":
+                                            logger.info(f"Funnel Incomplete. Local rules didn't match — calling LLM for qualification.")
                                             
                                             raw_agency_tag = session.get("agency_tag") or tenant_config.get("agency_tag", "Real Estate Agency")
                                             agency_name = str(raw_agency_tag).replace("_", " ").title()
