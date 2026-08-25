@@ -129,11 +129,18 @@ def transcribe_audio_groq(file_path: str):
 
 def robust_chat_completion(messages_array, temperature, max_tokens, json_mode=False):
     try:
+        # Optimize context window: Only send System Prompt (first message) + LAST 6 messages to LLM
+        # This dramatically reduces payload weight and TTFT (Time To First Token)
+        if len(messages_array) > 7:
+            optimized_messages = [messages_array[0]] + messages_array[-6:]
+        else:
+            optimized_messages = messages_array
+
         kwargs = {
             "model": MODEL_ID,
-            "temperature": temperature,
-            "max_tokens": 512,
-            "messages": messages_array
+            "temperature": 0.0,
+            "max_tokens": 250,
+            "messages": optimized_messages
         }
         if json_mode:
             kwargs["response_format"] = {"type": "json_object"}
