@@ -1448,7 +1448,7 @@ async def process_whatsapp_data(data: dict):
                                     elif btn_id == "btn_visit":
                                         session["state"] = "SCHEDULING_VISIT"
                                         session["funnel_state"] = "AWAITING_VISIT_INFO"
-                                        ai_response = "Behtareen! Is property ka physical visit arrange karne ke liye, barah-e-karam apna Pura Naam aur Phone Number share kardein taake hamara agent aapse rabta kar le. 📅🤝"
+                                        ai_response = "Behtareen! Is property ka physical visit arrange karne ke liye, barah-e-karam sirf apna **Pura Naam** likh kar bhej dain taake hamara agent aapki booking confirm kar le. 📅🤝"
                                         send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
                                         save_supabase_message(from_number, "user", "Clicked Visit Schedule", tenant_id)
                                         save_supabase_message(from_number, "assistant", ai_response, tenant_id)
@@ -1986,6 +1986,7 @@ STRICT RULES FOR YOUR RESPONSE:
 5. GENDER-NEUTRAL: Always use 'Janab' or 'Aap'. NEVER use 'Sir' or 'Bhai'.
 5. TONE: 100% Conversational and natural Roman Urdu. Like a helpful human, not a robot.
 6. OFF-TOPIC RECOVERY: Agar user koi aisi baat kare jo property se related nahi hai, toh politely uski baat ka short jawab dein aur aakhir mein add karein: "Waise janab, jo property maine aapko abhi dikhayi hai, kya aap uska visit schedule karna chahenge?"
+IMPORTANT CONTEXT RULE: If the user asks a question about a property's features (like 'park hai?') and you answer it, you MUST append this polite instruction at the end of your response to educate the user: '\n\n(Note: Janab, behtar rehnumai ke liye, koshish karein ke jis property ki aap baat kar rahe hain, uski tasveer (image) par reply kar ke sawal poochein.)'
 7. JSON FORMAT REQUIRED: You must respond ONLY in strictly valid JSON format with these exact keys:
 - "ai_response": Your conversational response in Roman Urdu.
 - "visit_intent_detected": (boolean) If the user's message expresses ANY desire to visit, see, tour, or inspect the property in person (e.g., 'visit kb kr skte', 'dekhna hai'), set this to true. Otherwise false.
@@ -2031,7 +2032,7 @@ CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON starti
                                                 if extracted_data.get("visit_intent_detected") is True:
                                                     session["state"] = "SCHEDULING_VISIT"
                                                     session["funnel_state"] = "AWAITING_VISIT_INFO"
-                                                    ai_response = "Behtareen! Is property ka physical visit arrange karne ke liye, barah-e-karam apna Pura Naam aur Phone Number share kardein taake hamara agent aapse rabta kar le. 📅🤝"
+                                                    ai_response = "Behtareen! Is property ka physical visit arrange karne ke liye, barah-e-karam sirf apna **Pura Naam** likh kar bhej dain taake hamara agent aapki booking confirm kar le. 📅🤝"
                                                     send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
                                                     save_supabase_message(from_number, "user", msg_body, tenant_id)
                                                     save_supabase_message(from_number, "assistant", ai_response, tenant_id)
@@ -2253,10 +2254,11 @@ STRICT ANTI-HALLUCINATION RULES:
 20. OUT OF SYLLABUS (OFF-TOPIC): If the user asks questions unrelated to real estate, properties, or our agency (e.g., weather, politics, general AI questions), STRICTLY REFUSE TO ANSWER. Respond politely: "Janab, main ek Real Estate Assistant hoon. Main sirf properties aur real estate ke hawale se aapki rehnumai kar sakta hoon. Batayein, aap kis type ki property dekh rahe hain?"
 21. CRITICAL INTENT ROUTING RULES (CLASSIFICATION): You MUST classify each user message into one of these four intents for "intent_action":
    - "small_talk": If the user is just greeting, saying thanks, ok, yes, etc., you MUST set "intent_action": "small_talk". Provide the answer concisely in ai_response.
-   - "qa": If the user asks ANY specific question about the current property's features, amenities, videos, location, or details (e.g., 'pani hai?', 'video hai?', 'iska btao'). Output "qa" so the system knows strictly to answer the question WITHOUT re-querying the database.
+   - "qa": CRITICAL! You MUST output "qa" if the user asks ANY specific question about a property's features, amenities, location, rooms, park, gas, water, or details (e.g., "is ghar mein park hai?", "kahan par hai?", "rooms kitne hain?"). NEVER use "search" for these follow-up questions.
    - "search": ONLY set "intent_action": "search" when the user is explicitly providing NEW funnel parameters (like changing their budget) or actively asking to find a brand NEW property.
    - "clarify": If the user's input is confusing, ambiguous, or if they reply to an image with an unclear text (e.g., "yeh wala?", "hmm"), set "intent_action": "clarify". In ai_response, explicitly ask for confirmation: "Janab, kya aap is property ke hawalay se kuch poochna chah rahe hain? Ya koi aur option dekhna chahenge?"
    RULE: If intent_action is 'small_talk', 'clarify', or 'qa', DO NOT output property parameter updates. Just write a natural conversational reply.
+   IMPORTANT CONTEXT RULE: If the user asks a question about a property's features (like 'park hai?') and you answer it, you MUST append this polite instruction at the end of your response to educate the user: '\n\n(Note: Janab, behtar rehnumai ke liye, koshish karein ke jis property ki aap baat kar rahe hain, uski tasveer (image) par reply kar ke sawal poochein.)'
 22. JSON FORMAT REQUIRED: You must respond ONLY in strictly valid JSON format with these exact keys:
 - "ai_response": Your conversational response in Roman Urdu.
 - "intent_action": (string) One of: "small_talk", "qa", "clarify", or "search".
@@ -2303,7 +2305,7 @@ CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON starti
                                                 if extracted_data.get("visit_intent_detected") is True:
                                                     session["state"] = "SCHEDULING_VISIT"
                                                     session["funnel_state"] = "AWAITING_VISIT_INFO"
-                                                    ai_response = "Behtareen! Is property ka physical visit arrange karne ke liye, barah-e-karam apna Pura Naam aur Phone Number share kardein taake hamara agent aapse rabta kar le. 📅🤝"
+                                                    ai_response = "Behtareen! Is property ka physical visit arrange karne ke liye, barah-e-karam sirf apna **Pura Naam** likh kar bhej dain taake hamara agent aapki booking confirm kar le. 📅🤝"
                                                     send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
                                                     save_supabase_message(from_number, "user", msg_body, tenant_id)
                                                     save_supabase_message(from_number, "assistant", ai_response, tenant_id)
