@@ -69,8 +69,8 @@ RESEND_API_KEY = os.environ.get("RESEND_API_KEY")
 MY_VERIFY_TOKEN = os.environ.get("WHATSAPP_VERIFY_TOKEN", "ALAAUDIN_SECRET_TOKEN")
 
 client = OpenAI(api_key=OPENROUTER_API_KEY, base_url="https://openrouter.ai/api/v1", max_retries=0)
-MODEL_ID = "google/gemini-2.0-flash-exp:free"
-FALLBACK_MODEL = "google/gemini-1.5-flash:free"
+MODEL_ID = "qwen/qwen-2.5-72b-instruct:free"
+FALLBACK_MODEL = "google/gemma-2-9b-it:free"
 
 # =========================================================================================
 # 🎙️ AUDIO MESSAGE PROCESSING (Meta Download + OpenAI Whisper)
