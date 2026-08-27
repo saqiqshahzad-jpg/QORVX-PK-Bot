@@ -63,12 +63,16 @@ app = FastAPI()
 # =========================================================================================
 # 👑 PRODUCTION ENVIRONMENT VARIABLES LOCK
 # =========================================================================================
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+api_key = os.getenv("GEMINI_API_KEY")
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY")
 
 MY_VERIFY_TOKEN = os.environ.get("WHATSAPP_VERIFY_TOKEN", "ALAAUDIN_SECRET_TOKEN")
 
-client = OpenAI(api_key=GEMINI_API_KEY, base_url="https://generativelanguage.googleapis.com/v1beta/openai/", max_retries=0)
+client = OpenAI(
+    api_key=api_key,
+    base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+    max_retries=0
+)
 MODEL_ID = "gemini-1.5-flash"
 FALLBACK_MODEL = "gemini-1.5-flash"
 
