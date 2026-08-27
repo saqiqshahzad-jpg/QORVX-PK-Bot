@@ -539,8 +539,11 @@ def send_property_media_sequence(to_number: str, prop: dict, tenant_id: str, acc
         except Exception as e:
             logger.error(f"Failed to send image: {e}")
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
-        executor.map(dispatch_single_image, image_urls)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        for img_url in image_urls:
+            executor.submit(dispatch_single_image, img_url)
+            # CRITICAL: 0.3 second breather to bypass WhatsApp spam filters
+            time.sleep(0.3)
 
     # 4. Dispatch Video
     if video_url and video_url != "N/A" and video_url.startswith("http"):
@@ -2424,6 +2427,11 @@ CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON starti
                                         # Check if all 5 parameters are fulfilled
                                         if intent == "search" and session.get("purpose") and session.get("property_type") and session.get("location") and has_bhk and session.get("budget"):
                                             logger.info("All 5 funnel parameters satisfied and intent is search. Executing database query.")
+                                            
+                                            # Send the waiting message
+                                            send_whatsapp_text(tenant_id, from_number, "⏳ Janab, main aapki requirements ke mutabiq behtareen properties dhoond raha hoon. Barah-e-karam 5 seconds intezar farmayen...", whatsapp_token)
+                                            # Wait exactly 5 seconds
+                                            time.sleep(5)
                                             
                                             results = query_property_database(
                                                 listing_type=session["purpose"],
