@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import logging
+import concurrent.futures
 
 # =========================================================================================
 # 📝 SYSTEM-WIDE LOGGING CONFIGURATION
@@ -532,9 +533,14 @@ def send_property_media_sequence(to_number: str, prop: dict, tenant_id: str, acc
         logger.info(f"Dispatching direct video stream: {video_url}")
 
     # 3. Dispatch Images (NO CAPTIONS)
-    for idx, img_url in enumerate(image_urls):
-        send_whatsapp_media(tenant_id, to_number, img_url, "image", access_token, caption="")
-        time.sleep(0.8) # Prevent Meta rate-limit drops
+    def dispatch_single_image(img_url):
+        try:
+            send_whatsapp_media(tenant_id, to_number, img_url, "image", access_token, caption="")
+        except Exception as e:
+            logger.error(f"Failed to send image: {e}")
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
+        executor.map(dispatch_single_image, image_urls)
 
     # 4. Dispatch Video
     if video_url and video_url != "N/A" and video_url.startswith("http"):
