@@ -63,14 +63,14 @@ app = FastAPI()
 # =========================================================================================
 # 👑 PRODUCTION ENVIRONMENT VARIABLES LOCK
 # =========================================================================================
-OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY")
 
 MY_VERIFY_TOKEN = os.environ.get("WHATSAPP_VERIFY_TOKEN", "ALAAUDIN_SECRET_TOKEN")
 
-client = OpenAI(api_key=OPENROUTER_API_KEY, base_url="https://openrouter.ai/api/v1", max_retries=0)
-MODEL_ID = "google/gemma-4-26b-a4b-it:free"
-FALLBACK_MODEL = "mistralai/mistral-7b-instruct:free"
+client = OpenAI(api_key=GEMINI_API_KEY, base_url="https://generativelanguage.googleapis.com/v1beta/openai/", max_retries=0)
+MODEL_ID = "gemini-1.5-flash"
+FALLBACK_MODEL = "gemini-1.5-flash"
 
 # =========================================================================================
 # 🎙️ AUDIO MESSAGE PROCESSING (Meta Download + OpenAI Whisper)
