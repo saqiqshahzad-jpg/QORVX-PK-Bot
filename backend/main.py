@@ -1186,32 +1186,10 @@ SECTION 1 — TONE & IDENTITY
 ═══════════════════════════════════════════════════════════════════
 SECTION 2 — CONTRADICTION & OVERWRITE PROTOCOL
 ═══════════════════════════════════════════════════════════════════
-Before finalizing any response, check the new message against
-previously confirmed parameters for logical consistency.
-
-Trigger this protocol when a new parameter value is incompatible with
-an already-established one — for example:
-- A "rent" purpose paired with a budget in the crore range (a budget
-  jump like "1 Lakh" → "50 Crore").
-- A property type that cannot coexist with a previously stated one
-  in the same search (e.g. "Plot" suddenly following a confirmed
-  "Flat rent" conversation with no new search signaled).
-- Any other combination where proceeding to a database search would
-  clearly return zero or nonsensical results.
-
-When triggered:
-1. Set `intent` to "qa" (never "search") for this turn — do NOT let
-   the backend fire a database query on contradictory parameters.
-2. Set the CONTRADICTING parameter to `null` (not the one the user
-   just confirmed). Example: if a new sky-high budget contradicts an
-   old "rent" purpose, null out `purpose`, keep the new `budget`.
-3. Write a `reply_text` that explicitly names the contradiction and
-   asks the user to confirm/resolve it. Example pattern:
-   "Janab, aapne budget 1 Lakh se seedha 50 Crore kar diya hai. Itne
-   budget mein rent thora na-mumkin hai. Kya ab aap property kharidna
-   (buy) chahte hain?"
-4. Only resume `intent: "search"` once the user's next message
-   resolves the contradiction.
+If the user abruptly changes a parameter (e.g., changing location from Lahore to Islamabad, or changing budget):
+1. Update ONLY the changed parameter. Keep the rest of the previously collected data intact.
+2. Set `intent` strictly to "confirm_change".
+3. Set `reply_text` to: "Janab, aapne apni requirements update ki hain. Kya main in details ke sath search shuru karun?"
 
 ═══════════════════════════════════════════════════════════════════
 SECTION 3 — PAKISTANI REAL ESTATE NUANCES & SLANG DICTIONARY
@@ -1518,10 +1496,10 @@ async def process_whatsapp_data(data: dict):
                                     else:
                                         agency_name = str(tenant_config.get("agency_tag", "Real Estate Agency")).replace("_", " ").title()
 
-                                        
-                                    send_whatsapp_text(tenant_id, from_number, f"Walaikum Assalam! {agency_name} mein khush-amdeed. ✨", whatsapp_token)
-                                    send_menu_buttons(from_number, tenant_id, whatsapp_token)
-                                    return PlainTextResponse(content="OK", status_code=200)
+                                    if message.get("type") != "audio":
+                                        send_whatsapp_text(tenant_id, from_number, f"Walaikum Assalam! {agency_name} mein khush-amdeed. ✨", whatsapp_token)
+                                        send_menu_buttons(from_number, tenant_id, whatsapp_token)
+                                        return PlainTextResponse(content="OK", status_code=200)
 
                                 # Register session for auto-save in finally block
                                 active_sessions.append((from_number, session, tenant_id))
@@ -1562,6 +1540,18 @@ async def process_whatsapp_data(data: dict):
                                         ai_response = "Janab, bilkul! Main aapko is se kam price mein options dikhata hoon. Barah-e-karam apna naya approximate budget bata dein? 📉"
                                         send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
                                         save_supabase_message(from_number, "user", "Clicked Sasti Option", tenant_id)
+                                        save_supabase_message(from_number, "assistant", ai_response, tenant_id)
+                                        return PlainTextResponse(content="OK", status_code=200)
+
+                                    elif btn_id == "change_req_no":
+                                        session["purpose"] = None
+                                        session["property_type"] = None
+                                        session["location"] = None
+                                        session["bhk"] = None
+                                        session["budget"] = None
+                                        ai_response = "Zaroor Janab, batayen aapki nai requirements kya hain? 🔄"
+                                        send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
+                                        save_supabase_message(from_number, "user", "Clicked Nahi, Change Karein", tenant_id)
                                         save_supabase_message(from_number, "assistant", ai_response, tenant_id)
                                         return PlainTextResponse(content="OK", status_code=200)
 
@@ -2310,6 +2300,7 @@ STRICT ANTI-HALLUCINATION RULES:
    - "qa": CRITICAL! You MUST output "qa" if the user asks ANY specific question about a property's features, amenities, location, rooms, park, gas, water, or details (e.g., "is ghar mein park hai?", "kahan par hai?", "rooms kitne hain?"). NEVER use "search" for these follow-up questions.
    - "search": ONLY set "intent_action": "search" when the user is explicitly providing NEW funnel parameters (like changing their budget) or actively asking to find a brand NEW property.
    - "clarify": If the user's input is confusing, ambiguous, or if they reply to an image with an unclear text (e.g., "yeh wala?", "hmm"), set "intent_action": "clarify". In ai_response, explicitly ask for confirmation: "Janab, kya aap is property ke hawalay se kuch poochna chah rahe hain? Ya koi aur option dekhna chahenge?"
+   - "confirm_change": ONLY set "intent_action": "confirm_change" if the user explicitly changes a parameter mid-funnel (e.g., changes location from Lahore to Islamabad, or updates their budget). Set ai_response to: "Janab, aapne apni requirements update ki hain. Kya main in details ke sath search shuru karun?
    RULE: If intent_action is 'small_talk', 'clarify', or 'qa', DO NOT output property parameter updates. Just write a natural conversational reply.
    IMPORTANT CONTEXT RULE: If the user asks a question about a property's features (like 'park hai?') and you answer it, you MUST append this polite instruction at the end of your response to educate the user: '
 
@@ -2397,7 +2388,35 @@ CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON starti
                                         
                                         # 3. CONDITIONAL DATABASE QUERY
                                         intent = extracted_data.get("intent_action", "search") if isinstance(extracted_data, dict) else "search"
+                                        
+                                        if btn_id == "confirm_search_yes":
+                                            intent = "search"
+                                            
                                         logger.info(f"[INTENT ROUTER] Classified intent: '{intent}' for message: '{msg_body[:50]}'")
+                                        
+                                        if intent == "confirm_change":
+                                            loc = session.get('location', 'N/A')
+                                            prop_type = session.get('property_type', 'N/A')
+                                            bhk = session.get('bhk', 'N/A')
+                                            budget = session.get('budget', 'N/A')
+                                            purpose = session.get('purpose', 'N/A')
+                                            
+                                            param_list = f"📍 Location: {loc}\n🏠 Type: {prop_type}\n🛏️ Rooms: {bhk}\n💰 Budget: {budget}\n🏷️ Purpose: {purpose}"
+                                            body_text = f"{ai_response}\n\n*Aapki Nai Requirements:*\n{param_list}"
+                                            
+                                            send_whatsapp_buttons(
+                                                tenant_id=tenant_id,
+                                                to_number=from_number,
+                                                body_text=body_text,
+                                                buttons_list=[
+                                                    {"id": "confirm_search_yes", "title": "Haan, Confirm 👍"},
+                                                    {"id": "change_req_no", "title": "Nahi, Change Karein 🔄"}
+                                                ],
+                                                whatsapp_token=whatsapp_token
+                                            )
+                                            save_supabase_message(from_number, "user", msg_body, tenant_id)
+                                            save_supabase_message(from_number, "assistant", body_text, tenant_id)
+                                            return PlainTextResponse(content="OK", status_code=200)
                                         
                                         is_plot = session.get("property_type") == "plot"
                                         has_bhk = True if is_plot else bool(session.get("bhk"))
