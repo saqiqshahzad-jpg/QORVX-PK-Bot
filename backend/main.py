@@ -1895,16 +1895,27 @@ Action: Greet them back politely. Acknowledge their past interest naturally. Ask
                                             cleaned_text = cleaned_text.strip()
                                             
                                             # Now search and parse
-                                            json_match = re.search(r'\{.*\}', cleaned_text, re.DOTALL)
+                                            # Force find anything looking like a JSON object across multiple lines
+                                            json_match = re.search(r'\{[\s\S]*\}', cleaned_text)
                                             if not json_match:
-                                                print("WARNING: No JSON block found in LLM response. Using safe fallback.")
+                                                print("WARNING: Absolutely no JSON block found. Using fallback.")
                                                 extracted_data = {
                                                     "intent_action": "qa", 
                                                     "reply_text": "Maazrat janab, main thora confuse ho gaya. Barah-e-karam apna jawab dobara wazeh karke batayein.",
                                                     "ai_response": "Maazrat janab, main thora confuse ho gaya. Barah-e-karam apna jawab dobara wazeh karke batayein."
                                                 }
                                             else:
-                                                extracted_data = json.loads(json_match.group(0))
+                                                try:
+                                                    # Extract the matched string and parse
+                                                    json_string = json_match.group(0)
+                                                    extracted_data = json.loads(json_string)
+                                                except json.JSONDecodeError:
+                                                    print("WARNING: Found curly braces but JSON was invalid.")
+                                                    extracted_data = {
+                                                        "intent_action": "qa", 
+                                                        "reply_text": "Maazrat janab, meri samajh mein nahi aaya. Barah-e-karam dobara batayein.",
+                                                        "ai_response": "Maazrat janab, meri samajh mein nahi aaya. Barah-e-karam dobara batayein."
+                                                    }
                                             
                                             # --- GOOGLE SHEET APPEND LOGIC ---
                                             import datetime
@@ -2065,16 +2076,27 @@ CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON starti
                                                 cleaned_text = cleaned_text.strip()
                                                 
                                                 # Now search and parse
-                                                json_match = re.search(r'\{.*\}', cleaned_text, re.DOTALL)
+                                                # Force find anything looking like a JSON object across multiple lines
+                                                json_match = re.search(r'\{[\s\S]*\}', cleaned_text)
                                                 if not json_match:
-                                                    print("WARNING: No JSON block found in LLM response. Using safe fallback.")
+                                                    print("WARNING: Absolutely no JSON block found. Using fallback.")
                                                     extracted_data = {
                                                         "intent_action": "qa", 
                                                         "reply_text": "Maazrat janab, main thora confuse ho gaya. Barah-e-karam apna jawab dobara wazeh karke batayein.",
                                                         "ai_response": "Maazrat janab, main thora confuse ho gaya. Barah-e-karam apna jawab dobara wazeh karke batayein."
                                                     }
                                                 else:
-                                                    extracted_data = json.loads(json_match.group(0))
+                                                    try:
+                                                        # Extract the matched string and parse
+                                                        json_string = json_match.group(0)
+                                                        extracted_data = json.loads(json_string)
+                                                    except json.JSONDecodeError:
+                                                        print("WARNING: Found curly braces but JSON was invalid.")
+                                                        extracted_data = {
+                                                            "intent_action": "qa", 
+                                                            "reply_text": "Maazrat janab, meri samajh mein nahi aaya. Barah-e-karam dobara batayein.",
+                                                            "ai_response": "Maazrat janab, meri samajh mein nahi aaya. Barah-e-karam dobara batayein."
+                                                        }
                                                 ai_response = extracted_data.get("ai_response", "")
                                                 
                                                 if extracted_data.get("visit_intent_detected") is True:
@@ -2345,16 +2367,27 @@ CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON starti
                                                 cleaned_text = cleaned_text.strip()
                                                 
                                                 # Now search and parse
-                                                json_match = re.search(r'\{.*\}', cleaned_text, re.DOTALL)
+                                                # Force find anything looking like a JSON object across multiple lines
+                                                json_match = re.search(r'\{[\s\S]*\}', cleaned_text)
                                                 if not json_match:
-                                                    print("WARNING: No JSON block found in LLM response. Using safe fallback.")
+                                                    print("WARNING: Absolutely no JSON block found. Using fallback.")
                                                     extracted_data = {
                                                         "intent_action": "qa", 
                                                         "reply_text": "Maazrat janab, main thora confuse ho gaya. Barah-e-karam apna jawab dobara wazeh karke batayein.",
                                                         "ai_response": "Maazrat janab, main thora confuse ho gaya. Barah-e-karam apna jawab dobara wazeh karke batayein."
                                                     }
                                                 else:
-                                                    extracted_data = json.loads(json_match.group(0))
+                                                    try:
+                                                        # Extract the matched string and parse
+                                                        json_string = json_match.group(0)
+                                                        extracted_data = json.loads(json_string)
+                                                    except json.JSONDecodeError:
+                                                        print("WARNING: Found curly braces but JSON was invalid.")
+                                                        extracted_data = {
+                                                            "intent_action": "qa", 
+                                                            "reply_text": "Maazrat janab, meri samajh mein nahi aaya. Barah-e-karam dobara batayein.",
+                                                            "ai_response": "Maazrat janab, meri samajh mein nahi aaya. Barah-e-karam dobara batayein."
+                                                        }
                                                 ai_response = extracted_data.get("ai_response", "")
                                                 
                                                 if extracted_data.get("visit_intent_detected") is True:
