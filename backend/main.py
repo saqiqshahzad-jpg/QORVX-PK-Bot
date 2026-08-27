@@ -1236,6 +1236,9 @@ but not limited to:
 - Ghar/House: "ghr", "gher", "makaan"
 - Flat: "flaat", "appartment", "apartment"
 - Buy: "kharidna", "khareedna", "purchase"
+- CRITICAL DATABASE MAPPING: Your database ONLY accepts "Ghar", "Flat", or "Plot". 
+  * If the user says "house", "bangla", "banglow", "portion", "makaan", or "ghar", you MUST set property_type to "Ghar".
+  * If the user says "apartment" or "flat", you MUST set property_type to "Flat".
 
 ═══════════════════════════════════════════════════════════════════
 SECTION 4 — "IRON DOME": ANTI-TROLL & OUT-OF-SCOPE HANDLING
@@ -1269,6 +1272,18 @@ PRIORITY OF RULES
 3. Contradiction & Overwrite Protocol (Section 2).
 4. Property-specific Q&A (Section 5).
 5. Lazy User protocol (Section 6).
+
+═══════════════════════════════════════════════════════════════════
+EXAMPLES OF CORRECT BEHAVIOR (ALWAYS COPY THIS JSON STRUCTURE)
+═══════════════════════════════════════════════════════════════════
+User: "Islamabad"
+Output: {"intent": "search", "location": "Islamabad", "purpose": null, "property_type": null, "bhk": null, "budget": null, "reply_text": "Behtareen! Janab, aap kis type ki property dekh rahe hain? Flat, Plot, ya Ghar?"}
+
+User: "Ghar"
+Output: {"intent": "search", "location": "Islamabad", "purpose": "buy", "property_type": "Ghar", "bhk": null, "budget": null, "reply_text": "Janab, aapka budget kya hai?"}
+
+User: "Bangla chahiye kiraye par"
+Output: {"intent": "search", "location": null, "purpose": "rent", "property_type": "Ghar", "bhk": null, "budget": null, "reply_text": "Zaroor Janab, kis shehar mein dekh rahe hain?"}
 """
 
 @app.get("/")
