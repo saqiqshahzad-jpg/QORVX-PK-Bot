@@ -532,7 +532,7 @@ def send_property_media_sequence(to_number: str, prop: dict, tenant_id: str, acc
             video_url += "?raw=1" if "?" not in video_url else "&raw=1"
         logger.info(f"Dispatching direct video stream: {video_url}")
 
-    # 3. Dispatch Images (NO CAPTIONS)
+    # 3. Dispatch Images  (NO CAPTIONS)
     def dispatch_single_image(img_url):
         try:
             send_whatsapp_media(tenant_id, to_number, img_url, "image", access_token, caption="")
