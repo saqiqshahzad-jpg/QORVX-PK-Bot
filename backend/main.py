@@ -139,7 +139,7 @@ def robust_chat_completion(messages_array, temperature, max_tokens, json_mode=Fa
         kwargs = {
             "model": MODEL_ID,
             "temperature": 0.0,
-            "max_tokens": 250,
+            "max_tokens": 350,
             "messages": optimized_messages
         }
         if json_mode:
@@ -1192,6 +1192,18 @@ CRITICAL PARSING & CLARIFICATION RULES (DESI CURRENCY & SMART RECOVERY):
 
 - When ALL 4 variables are collected, YOU MUST OUTPUT EXACTLY THIS JSON FORMAT ON A NEW LINE:
 [PROPERTY_SEARCH: {{"bhk":<int>,"budget":<int>,"location":"<str>","purpose":"buy"|"rent"}}]
+
+CRITICAL OUTPUT FORMAT: You must ALWAYS respond in the following JSON format and nothing else. Never output plain text outside this JSON block.
+Example structure:
+{{
+  "intent": "search",
+  "bhk": null,
+  "location": "Islamabad", 
+  "budget": null,
+  "purpose": "buy",
+  "property_type": "Ghar",
+  "reply_text": "Behtareen! Janab, aapka budget kitna hai?"
+}}
 """
 
 @app.get("/")
