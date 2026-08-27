@@ -2420,7 +2420,12 @@ CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON starti
                                                 about_us = agency_profile.get("About_Us", "N/A")
                                                 DYNAMIC_PROMPT += f"\nCRITICAL CONTEXT: You are currently representing the agency '{agency_name}'. If the user asks about our office, owner, or contact info, use ONLY these details: Address: {address}, Phone: {phone}, Email: {email}. About us: {about_us}."
 
-                                            completion = robust_chat_completion([{"role": "system", "content": DYNAMIC_PROMPT}], 0.3, 150, json_mode=True)
+                                            messages = [
+                                                {"role": "system", "content": DYNAMIC_PROMPT},
+                                                # CRITICAL: Gemini strictly requires this user role to prevent the 'contents is not specified' error
+                                                {"role": "user", "content": msg_body if msg_body else "Please evaluate the funnel state and ask the next question."}
+                                            ]
+                                            completion = robust_chat_completion(messages, 0.3, 150, json_mode=True)
                                             try:
                                                 import json
                                                 import re
