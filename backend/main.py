@@ -73,8 +73,8 @@ client = OpenAI(
     base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
     max_retries=0
 )
-MODEL_ID = "gemini-1.5-flash"
-FALLBACK_MODEL = "gemini-1.5-flash"
+MODEL_ID = "gemini-2.5-flash"
+FALLBACK_MODEL = "gemini-2.5-flash"
 
 # =========================================================================================
 # 🎙️ AUDIO MESSAGE PROCESSING (Meta Download + OpenAI Whisper )
