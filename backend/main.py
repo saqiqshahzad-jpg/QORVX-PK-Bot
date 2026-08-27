@@ -143,7 +143,7 @@ def robust_chat_completion(messages_array, temperature, max_tokens, json_mode=Fa
         kwargs = {
             "model": MODEL_ID,
             "temperature": 0.0,
-            "max_tokens": 350,
+            "max_tokens": 1024,
             "messages": optimized_messages
         }
         if json_mode:
@@ -1590,7 +1590,7 @@ Action: Greet them back politely. Acknowledge their past interest naturally. Ask
                                         model=MODEL_ID,
                                         messages=[{"role": "system", "content": RETURNING_PROMPT}],
                                         temperature=0.3,
-                                        max_tokens=512
+                                        max_tokens=1024
                                     )
                                     ai_response = completion.choices[0].message.content
                                     send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
@@ -1948,7 +1948,7 @@ Action: Greet them back politely. Acknowledge their past interest naturally. Ask
                                                 messages=[{"role": "user", "content": EXTRACT_PROMPT}],
                                                 response_format={"type": "json_object"},
                                                 temperature=0.1,
-                                                max_tokens=512
+                                                max_tokens=1024
                                             )
                                             import json
                                             import re
