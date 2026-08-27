@@ -5,7 +5,7 @@ import logging
 import concurrent.futures
 
 # =========================================================================================
-# 📝 SYSTEM-WIDE LOGGING CONFIGURATION
+# 📝 SYSTEM-WIDE LOGGING CONFIGURATION 
 # =========================================================================================
 logging.basicConfig(
     level=logging.INFO,
@@ -2243,139 +2243,33 @@ CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON starti
                                         session["chat_history"].append({"role": "assistant", "content": small_talk_reply})
                                         return PlainTextResponse(content="OK", status_code=200)
 
-                                    if session.get("state") != "INSPECTING_PROPERTY" and session.get("purpose") and session.get("property_type") and session.get("location") and has_bhk and session.get("budget"):
-                                        logger.info("All 5 funnel parameters satisfied. Executing database query.")
+                                                                        # Reset any accidental default
+                                    if not session.get("purpose") or session.get("purpose") not in ["buy", "rent"]:
+                                        session["purpose"] = None
+
+                                    # ═══════════════════════════════════════════════════════════════
+                                    # 🧠 DYNAMIC LLM-POWERED QUALIFICATION (INTENT-SHIFT AWARE)
+                                    # ═══════════════════════════════════════════════════════════════
+                                    if session.get("state") != "INSPECTING_PROPERTY":
+                                        logger.info(f"Evaluating Funnel State using Dynamic LLM Qualification Prompt.")
                                         
-                                        results = query_property_database(
-                                            listing_type=session["purpose"],
-                                            bhk=session["bhk"],
-                                            city_society=session["location"],
-                                            budget=session["budget"],
-                                            tenant_id=tenant_id,
-                                            booking_sheet_name=booking_sheet_name,
-                                            property_sheet_name=property_sheet_name,
-                                            agency_tag=session.get("agency_tag"),
-                                            property_type=session.get("property_type")
-                                        )
+                                        raw_agency_tag = session.get("agency_tag") or tenant_config.get("agency_tag", "Real Estate Agency")
+                                        agency_name = str(raw_agency_tag).replace("_", " ").title()
                                         
-                                        # ═══════════════════════════════════════════════════════════════
-                                        # 🏠 PROPERTY DISPATCH WITH PAGINATION (SEEN TRACKING)
-                                        # ═══════════════════════════════════════════════════════════════
-                                        if results and len(results) > 0:
-                                            seen_props = session.get("seen_properties", [])
-                                            
-                                            # Filter out properties the user has already seen in this session
-                                            available_props = [p for p in results if str(p.get("Property_ID", p.get("Demand_PKR", id(p)))) not in seen_props]
-                                            logger.info(f"Pagination: {len(results)} total results, {len(seen_props)} seen, {len(available_props)} available to show.")
-                                            
-                                            if available_props:
-                                                # Take the NEXT unseen property
-                                                active_prop = available_props[0]
-                                                
-                                                # Mark this property as seen
-                                                prop_id_key = str(active_prop.get("Property_ID", active_prop.get("Demand_PKR", id(active_prop))))
-                                                seen_props.append(prop_id_key)
-                                                session["seen_properties"] = seen_props
-                                                
-                                                intro_text = "Janab, yeh rahi aapki match karti hui property details! 🏡✨"
-                                                send_whatsapp_text(tenant_id, from_number, intro_text, whatsapp_token)
-                                                full_ai_text = intro_text + "\n\n"
-                                                
-                                                # Flexible helper to get key regardless of casing
-                                                prop = active_prop
-                                                def get_val(key_name, default="N/A"):
-                                                    for k, v in prop.items():
-                                                        if str(k).strip().lower() == key_name.lower() and v:
-                                                            return v
-                                                    return default
-
-                                                ptype = str(get_val("Property_Type", "House")).title()
-                                                city = str(get_val("City", "")).title()
-                                                society = str(get_val("Society_Area", "")).title()
-                                                phase = str(get_val("Phase_Block", ""))
-                                                size = str(get_val("Size", ""))
-                                                bhk_val = get_val("BHK", "N/A")
-                                                demand_raw = get_val("Demand_PKR", "N/A")
-                                                demand_formatted = format_pkr_currency(demand_raw)
-
-                                                location_str = f"{society}, {city}" if society else city
-                                                if phase and phase != "N/A":
-                                                    location_str += f" ({phase})"
-
-                                                prop_msg = f"📍 *{ptype} - {location_str}*\n"
-                                                prop_msg += f"▫️ *Size:* {size}\n"
-                                                prop_msg += f"▫️ *BHK / Rooms:* {bhk_val}\n"
-                                                prop_msg += f"▫️ *Demand:* PKR {demand_formatted}\n"
-                                                
-                                                remaining_count = len(available_props) - 1
-                                                if remaining_count > 0:
-                                                    prop_msg += f"\n_({remaining_count} mazeed option{'s' if remaining_count > 1 else ''} available)_\n"
-                                                
-                                                full_ai_text += prop_msg
-                                                
-                                                # Send the property summary FIRST as text
-                                                send_whatsapp_text(tenant_id, from_number, prop_msg, whatsapp_token)
-                                                
-                                                # Step 2: Pre-Media Notification Text
-                                                send_whatsapp_text(tenant_id, from_number, "Janab, main is property ki kuch tasaveer bhej raha hoon, barah-e-karam thora intezar farmayen... 📸", whatsapp_token)
-                                                
-                                                # Step 3: Dispatch Multi-Media Sequence (All Images + Video)
-                                                send_property_media_sequence(from_number, prop, tenant_id, whatsapp_token)
-                                                
-                                                # Add delay to allow Meta servers to process and deliver media before sending lightweight buttons
-                                                time.sleep(7)
-                                                
-                                                # Step 4: Interactive Action Buttons
-                                                outro_msg = "Kya aap is property ka visit schedule karna chahte hain? 🤝"
-                                                send_whatsapp_quick_reply_buttons(from_number, outro_msg, tenant_id, whatsapp_token)
-                                                full_ai_text += outro_msg
-                                                ai_response = full_ai_text
-                                                
-                                                # Save active context
-                                                session["active_property"] = active_prop
-                                                session["state"] = "INSPECTING_PROPERTY"
-                                                logger.info(f"Property dispatched (seen: {len(seen_props)}). State transitioned to INSPECTING_PROPERTY.")
-                                                
-                                                save_supabase_message(from_number, "user", msg_body, tenant_id)
-                                                save_supabase_message(from_number, "assistant", ai_response, tenant_id)
-                                                return PlainTextResponse(content="OK", status_code=200)
-                                            else:
-                                                # All matching inventory has been shown
-                                                session["state"] = None
-                                                session["seen_properties"] = []  # Reset for next search cycle
-                                                ai_response = f"Janab, is criteria ke mutabiq hamari tamam inventory aapko dikhayi ja chuki hai. Kya main aapka budget ya area thora change karun taake mazeed options mil sakein? 🔄"
-                                        else:
-                                            formatted_budget = format_pkr_currency(session.get('budget', ''))
-                                            ai_response = f"Janab, filhal PKR {formatted_budget} ke budget mein {session.get('location', '')} mein hamari inventory sold out hai. 🏢"
-                                            
-                                    else:
-                                        # Reset any accidental default
-                                        if not session.get("purpose") or session.get("purpose") not in ["buy", "rent"]:
-                                            session["purpose"] = None
-
-                                        # ═══════════════════════════════════════════════════════════════
-                                        # 🧠 DYNAMIC LLM-POWERED QUALIFICATION (INTENT-SHIFT AWARE)
-                                        # ═══════════════════════════════════════════════════════════════
-                                        if session.get("state") != "INSPECTING_PROPERTY":
-                                            logger.info(f"Funnel Incomplete. Using Dynamic LLM Qualification Prompt.")
-                                            
-                                            raw_agency_tag = session.get("agency_tag") or tenant_config.get("agency_tag", "Real Estate Agency")
-                                            agency_name = str(raw_agency_tag).replace("_", " ").title()
-                                            
-                                            # Fetch dynamic profile
-                                            prop_sheet = tenant_config.get("property_sheet_name")
-                                            agency_profile = get_agency_profile(raw_agency_tag, tenant_id, prop_sheet)
-                                            
-                                            # Prepare real-time session snapshot for the AI
-                                            current_state = f"""
+                                        # Fetch dynamic profile
+                                        prop_sheet = tenant_config.get("property_sheet_name")
+                                        agency_profile = get_agency_profile(raw_agency_tag, tenant_id, prop_sheet)
+                                        
+                                        # Prepare real-time session snapshot for the AI
+                                        current_state = f"""
         - Purpose (Buy/Rent): {session.get('purpose', 'Not specified')}
         - Property Type: {session.get('property_type', 'Not specified')}
         - Location: {session.get('location', 'Not specified')}
         - BHK / Rooms: {session.get('bhk', 'Not specified')}
-        - Budget: {format_currency(session['budget']) if session.get('budget') else 'Not specified'}
-                                            """
+        - Budget: {format_currency(session.get('budget')) if session.get('budget') else 'Not specified'}
+                                        """
 
-                                            DYNAMIC_PROMPT = f"""Identity: Aap {agency_name} ke smart, empathetic aur highly professional consultant hain.
+                                        DYNAMIC_PROMPT = f"""Identity: Aap {agency_name} ke smart, empathetic aur highly professional consultant hain.
 
 User's Current Message: "{msg_body}"
 Current Extracted Criteria:
@@ -2411,137 +2305,226 @@ STRICT ANTI-HALLUCINATION RULES:
 25. SLANG DICTIONARY: Users will use short forms. 'bjt' or 'bugt' = budget. 'k' = thousand. 'lac', 'lak', 'lakh' = 100,000. 'cr', 'crore' = 10,000,000. 'katny', 'kitny' = how much/many.
 26. CRITICAL PROPERTY RULE: 'Marla', 'Kanal', 'Sqft', and 'Gaz' are land sizes, NOT bedrooms. If a user says "5 marla", DO NOT put 5 in 'bhk'. Leave 'bhk' as null unless they explicitly say 'rooms', 'bed', or 'bhk'.
 27. OUT OF DOMAIN PROTECTION: If the user sends gibberish, spams random numbers, asks about things unrelated to real estate, or tries to trick you, DO NOT break JSON format. Strictly output intent "qa" and set ai_response to: "Janab, main QORVX ka ek AI Real Estate Advisor hoon. Barah-e-karam property ke hawale se baat karein taake main aapki behtar rehnumai kar saku."
-21. CRITICAL INTENT ROUTING RULES (CLASSIFICATION): You MUST classify each user message into one of these four intents for "intent_action":
+28. CRITICAL INTENT ROUTING RULES (CLASSIFICATION): You MUST classify each user message into one of these four intents for "intent_action":
    - "small_talk": If the user is just greeting, saying thanks, ok, yes, etc., you MUST set "intent_action": "small_talk". Provide the answer concisely in ai_response.
    - "qa": CRITICAL! You MUST output "qa" if the user asks ANY specific question about a property's features, amenities, location, rooms, park, gas, water, or details (e.g., "is ghar mein park hai?", "kahan par hai?", "rooms kitne hain?"). NEVER use "search" for these follow-up questions.
    - "search": ONLY set "intent_action": "search" when the user is explicitly providing NEW funnel parameters (like changing their budget) or actively asking to find a brand NEW property.
    - "clarify": If the user's input is confusing, ambiguous, or if they reply to an image with an unclear text (e.g., "yeh wala?", "hmm"), set "intent_action": "clarify". In ai_response, explicitly ask for confirmation: "Janab, kya aap is property ke hawalay se kuch poochna chah rahe hain? Ya koi aur option dekhna chahenge?"
    RULE: If intent_action is 'small_talk', 'clarify', or 'qa', DO NOT output property parameter updates. Just write a natural conversational reply.
-   IMPORTANT CONTEXT RULE: If the user asks a question about a property's features (like 'park hai?') and you answer it, you MUST append this polite instruction at the end of your response to educate the user: '\n\n(Note: Janab, behtar rehnumai ke liye, koshish karein ke jis property ki aap baat kar rahe hain, uski tasveer (image) par reply kar ke sawal poochein.)'
-22. JSON FORMAT REQUIRED: You must respond ONLY in strictly valid JSON format with these exact keys:
+   IMPORTANT CONTEXT RULE: If the user asks a question about a property's features (like 'park hai?') and you answer it, you MUST append this polite instruction at the end of your response to educate the user: '
+
+(Note: Janab, behtar rehnumai ke liye, koshish karein ke jis property ki aap baat kar rahe hain, uski tasveer (image) par reply kar ke sawal poochein.)'
+29. JSON FORMAT REQUIRED: You must respond ONLY in strictly valid JSON format with these exact keys:
 - "ai_response": Your conversational response in Roman Urdu.
 - "intent_action": (string) One of: "small_talk", "qa", "clarify", or "search".
-- "visit_intent_detected": (boolean) If the user's message expresses ANY desire to visit, see, tour, or inspect the property in person (e.g., 'visit kb kr skte', 'dekhna hai'), set this to true. Otherwise false.
+- "visit_intent_detected": (boolean) If the user's message expresses ANY desire to visit, see, tour, or inspect the property in person, set this to true. Otherwise false.
+- "updated_parameters": A JSON object containing the latest state of the 5 funnel parameters (purpose, property_type, location, bhk, budget) based on the user's message. Preserve existing values unless the user explicitly updates them. E.g. {{"purpose": "buy", "property_type": "house", "location": "Karachi", "bhk": 3, "budget": 15000000}}. Note budget MUST be an integer.
 
 CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON starting with {{ and ending with }}. DO NOT output any conversational text, greetings, or markdown formatting like ```json. Your entire response must be parseable by Python's json.loads().
 """
-                                            if agency_profile:
-                                                address = agency_profile.get("Address", "N/A")
-                                                phone = agency_profile.get("Phone", "N/A")
-                                                email = agency_profile.get("Email", "N/A")
-                                                about_us = agency_profile.get("About_Us", "N/A")
-                                                DYNAMIC_PROMPT += f"\nCRITICAL CONTEXT: You are currently representing the agency '{agency_name}'. If the user asks about our office, owner, or contact info, use ONLY these details: Address: {address}, Phone: {phone}, Email: {email}. About us: {about_us}."
+                                        if agency_profile:
+                                            address = agency_profile.get("Address", "N/A")
+                                            phone = agency_profile.get("Phone", "N/A")
+                                            email = agency_profile.get("Email", "N/A")
+                                            about_us = agency_profile.get("About_Us", "N/A")
+                                            DYNAMIC_PROMPT += f"\nCRITICAL CONTEXT: You are currently representing the agency '{agency_name}'. If the user asks about our office, owner, or contact info, use ONLY these details: Address: {address}, Phone: {phone}, Email: {email}. About us: {about_us}."
 
-                                            messages = [
-                                                {"role": "system", "content": DYNAMIC_PROMPT},
-                                                # CRITICAL: Gemini strictly requires this user role to prevent the 'contents is not specified' error
-                                                {"role": "user", "content": msg_body if msg_body else "Please evaluate the funnel state and ask the next question."}
-                                            ]
-                                            completion = robust_chat_completion(messages, 0.3, 150, json_mode=True)
-                                            try:
-                                                import json
-                                                import re
-                                                llm_text = completion.choices[0].message.content or ""
-                                                print(f"RAW LLM RESPONSE: {llm_text}")
-                                                
-                                                # Clean markdown backticks if the model hallucinates them
-                                                cleaned_text = llm_text.strip()
-                                                if cleaned_text.startswith("```json"):
-                                                    cleaned_text = cleaned_text[7:]
-                                                if cleaned_text.startswith("```"):
-                                                    cleaned_text = cleaned_text[3:]
-                                                if cleaned_text.endswith("```"):
-                                                    cleaned_text = cleaned_text[:-3]
-                                                cleaned_text = cleaned_text.strip()
-                                                
-                                                # Now search and parse
-                                                # Force find anything looking like a JSON object across multiple lines
-                                                json_match = re.search(r'\{[\s\S]*\}', cleaned_text)
-                                                if not json_match:
-                                                    print("WARNING: Absolutely no JSON block found. Using fallback.")
+                                        messages = [
+                                            {"role": "system", "content": DYNAMIC_PROMPT},
+                                            # CRITICAL: Gemini strictly requires this user role to prevent the 'contents is not specified' error
+                                            {"role": "user", "content": msg_body if msg_body else "Please evaluate the funnel state and ask the next question."}
+                                        ]
+                                        completion = robust_chat_completion(messages, 0.3, 200, json_mode=True)
+                                        try:
+                                            import json
+                                            import re
+                                            llm_text = completion.choices[0].message.content or ""
+                                            print(f"RAW LLM RESPONSE: {llm_text}")
+                                            
+                                            # Clean markdown backticks if the model hallucinates them
+                                            cleaned_text = llm_text.strip()
+                                            if cleaned_text.startswith("```json"):
+                                                cleaned_text = cleaned_text[7:]
+                                            if cleaned_text.startswith("```"):
+                                                cleaned_text = cleaned_text[3:]
+                                            if cleaned_text.endswith("```"):
+                                                cleaned_text = cleaned_text[:-3]
+                                            cleaned_text = cleaned_text.strip()
+                                            
+                                            # Now search and parse
+                                            json_match = re.search(r'\{[\s\S]*\}', cleaned_text)
+                                            if not json_match:
+                                                print("WARNING: Absolutely no JSON block found. Using fallback.")
+                                                extracted_data = {
+                                                    "intent_action": "qa", 
+                                                    "ai_response": "Maazrat janab, main thora confuse ho gaya. Barah-e-karam apna jawab dobara wazeh karke batayein."
+                                                }
+                                            else:
+                                                try:
+                                                    json_string = json_match.group(0)
+                                                    extracted_data = json.loads(json_string)
+                                                except json.JSONDecodeError:
+                                                    print("WARNING: Found curly braces but JSON was invalid.")
                                                     extracted_data = {
                                                         "intent_action": "qa", 
-                                                        "reply_text": "Maazrat janab, main thora confuse ho gaya. Barah-e-karam apna jawab dobara wazeh karke batayein.",
-                                                        "ai_response": "Maazrat janab, main thora confuse ho gaya. Barah-e-karam apna jawab dobara wazeh karke batayein."
+                                                        "ai_response": "Maazrat janab, meri samajh mein nahi aaya. Barah-e-karam dobara batayein."
                                                     }
-                                                else:
-                                                    try:
-                                                        # Extract the matched string and parse
-                                                        json_string = json_match.group(0)
-                                                        extracted_data = json.loads(json_string)
-                                                    except json.JSONDecodeError:
-                                                        print("WARNING: Found curly braces but JSON was invalid.")
-                                                        extracted_data = {
-                                                            "intent_action": "qa", 
-                                                            "reply_text": "Maazrat janab, meri samajh mein nahi aaya. Barah-e-karam dobara batayein.",
-                                                            "ai_response": "Maazrat janab, meri samajh mein nahi aaya. Barah-e-karam dobara batayein."
-                                                        }
-                                                ai_response = extracted_data.get("ai_response", "")
+                                            
+                                            ai_response = extracted_data.get("ai_response", "")
+                                            
+                                            # 2. UPDATE SESSION with LLM parameters
+                                            if "updated_parameters" in extracted_data and isinstance(extracted_data["updated_parameters"], dict):
+                                                params = extracted_data["updated_parameters"]
+                                                if params.get("purpose"): session["purpose"] = params["purpose"]
+                                                if params.get("property_type"): session["property_type"] = params["property_type"]
+                                                if params.get("location"): session["location"] = params["location"]
+                                                if params.get("bhk") is not None: session["bhk"] = params["bhk"]
+                                                if params.get("budget") is not None: session["budget"] = params["budget"]
+                                                logger.info(f"Session updated from LLM: {params}")
+
+                                            if extracted_data.get("visit_intent_detected") is True:
+                                                session["state"] = "SCHEDULING_VISIT"
+                                                session["funnel_state"] = "AWAITING_VISIT_INFO"
+                                                ai_response = "Behtareen! Is property ka physical visit arrange karne ke liye, barah-e-karam sirf apna **Pura Naam** likh kar bhej dain taake hamara agent aapki booking confirm kar le. 📅🤝"
+                                                send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
+                                                save_supabase_message(from_number, "user", msg_body, tenant_id)
+                                                save_supabase_message(from_number, "assistant", ai_response, tenant_id)
+                                                return PlainTextResponse(content="OK", status_code=200)
+                                        except Exception as e:
+                                            logger.error(f"Failed to parse DYNAMIC JSON: {e}")
+                                            ai_response = completion.choices[0].message.content if hasattr(completion, 'choices') else "Maazrat janab, error aagya."
+                                            extracted_data = {}
+                                        
+                                        # 3. CONDITIONAL DATABASE QUERY
+                                        intent = extracted_data.get("intent_action", "search") if isinstance(extracted_data, dict) else "search"
+                                        logger.info(f"[INTENT ROUTER] Classified intent: '{intent}' for message: '{msg_body[:50]}'")
+                                        
+                                        is_plot = session.get("property_type") == "plot"
+                                        has_bhk = True if is_plot else bool(session.get("bhk"))
+                                        
+                                        # Check if all 5 parameters are fulfilled
+                                        if intent == "search" and session.get("purpose") and session.get("property_type") and session.get("location") and has_bhk and session.get("budget"):
+                                            logger.info("All 5 funnel parameters satisfied and intent is search. Executing database query.")
+                                            
+                                            results = query_property_database(
+                                                listing_type=session["purpose"],
+                                                bhk=session.get("bhk"),
+                                                city_society=session["location"],
+                                                budget=session["budget"],
+                                                tenant_id=tenant_id,
+                                                booking_sheet_name=booking_sheet_name,
+                                                property_sheet_name=property_sheet_name,
+                                                agency_tag=session.get("agency_tag"),
+                                                property_type=session.get("property_type")
+                                            )
+                                            
+                                            # ═══════════════════════════════════════════════════════════════
+                                            # 🏠 PROPERTY DISPATCH WITH PAGINATION (SEEN TRACKING)
+                                            # ═══════════════════════════════════════════════════════════════
+                                            if results and len(results) > 0:
+                                                seen_props = session.get("seen_properties", [])
                                                 
-                                                if extracted_data.get("visit_intent_detected") is True:
-                                                    session["state"] = "SCHEDULING_VISIT"
-                                                    session["funnel_state"] = "AWAITING_VISIT_INFO"
-                                                    ai_response = "Behtareen! Is property ka physical visit arrange karne ke liye, barah-e-karam sirf apna **Pura Naam** likh kar bhej dain taake hamara agent aapki booking confirm kar le. 📅🤝"
+                                                available_props = [p for p in results if str(p.get("Property_ID", p.get("Demand_PKR", id(p)))) not in seen_props]
+                                                logger.info(f"Pagination: {len(results)} total results, {len(seen_props)} seen, {len(available_props)} available to show.")
+                                                
+                                                if available_props:
+                                                    active_prop = available_props[0]
+                                                    prop_id_key = str(active_prop.get("Property_ID", active_prop.get("Demand_PKR", id(active_prop))))
+                                                    seen_props.append(prop_id_key)
+                                                    session["seen_properties"] = seen_props
+                                                    
+                                                    intro_text = "Janab, yeh rahi aapki match karti hui property details! 🏡✨"
+                                                    send_whatsapp_text(tenant_id, from_number, intro_text, whatsapp_token)
+                                                    full_ai_text = intro_text + "\n\n"
+                                                    
+                                                    prop = active_prop
+                                                    def get_val(key_name, default="N/A"):
+                                                        for k, v in prop.items():
+                                                            if str(k).strip().lower() == key_name.lower() and v:
+                                                                return v
+                                                        return default
+
+                                                    ptype = str(get_val("Property_Type", "House")).title()
+                                                    city = str(get_val("City", "")).title()
+                                                    society = str(get_val("Society_Area", "")).title()
+                                                    phase = str(get_val("Phase_Block", ""))
+                                                    size = str(get_val("Size", ""))
+                                                    bhk_val = get_val("BHK", "N/A")
+                                                    demand_raw = get_val("Demand_PKR", "N/A")
+                                                    demand_formatted = format_pkr_currency(demand_raw)
+
+                                                    location_str = f"{society}, {city}" if society else city
+                                                    if phase and phase != "N/A":
+                                                        location_str += f" ({phase})"
+
+                                                    prop_msg = f"📍 *{ptype} - {location_str}*\n"
+                                                    prop_msg += f"▫️ *Size:* {size}\n"
+                                                    prop_msg += f"▫️ *BHK / Rooms:* {bhk_val}\n"
+                                                    prop_msg += f"▫️ *Demand:* PKR {demand_formatted}\n"
+                                                    
+                                                    remaining_count = len(available_props) - 1
+                                                    if remaining_count > 0:
+                                                        prop_msg += f"\n_({remaining_count} mazeed option{'s' if remaining_count > 1 else ''} available)_\n"
+                                                    
+                                                    full_ai_text += prop_msg
+                                                    
+                                                    send_whatsapp_text(tenant_id, from_number, prop_msg, whatsapp_token)
+                                                    send_whatsapp_text(tenant_id, from_number, "Janab, main is property ki kuch tasaveer bhej raha hoon, barah-e-karam thora intezar farmayen... 📸", whatsapp_token)
+                                                    send_property_media_sequence(from_number, prop, tenant_id, whatsapp_token)
+                                                    
+                                                    time.sleep(7)
+                                                    outro_msg = "Kya aap is property ka visit schedule karna chahte hain? 🤝"
+                                                    send_whatsapp_quick_reply_buttons(from_number, outro_msg, tenant_id, whatsapp_token)
+                                                    full_ai_text += outro_msg
+                                                    ai_response = full_ai_text
+                                                    
+                                                    session["active_property"] = active_prop
+                                                    session["state"] = "INSPECTING_PROPERTY"
+                                                    logger.info(f"Property dispatched (seen: {len(seen_props)}). State transitioned to INSPECTING_PROPERTY.")
+                                                    
+                                                    save_supabase_message(from_number, "user", msg_body, tenant_id)
+                                                    save_supabase_message(from_number, "assistant", ai_response, tenant_id)
+                                                    return PlainTextResponse(content="OK", status_code=200)
+                                                else:
+                                                    session["state"] = None
+                                                    session["seen_properties"] = []
+                                                    ai_response = f"Janab, is criteria ke mutabiq hamari tamam inventory aapko dikhayi ja chuki hai. Kya main aapka budget ya area thora change karun taake mazeed options mil sakein? 🔄"
                                                     send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
                                                     save_supabase_message(from_number, "user", msg_body, tenant_id)
                                                     save_supabase_message(from_number, "assistant", ai_response, tenant_id)
                                                     return PlainTextResponse(content="OK", status_code=200)
-                                            except Exception as e:
-                                                logger.error(f"Failed to parse DYNAMIC JSON: {e}")
-                                                ai_response = completion.choices[0].message.content
-                                                extracted_data = {}
-                                            
-                                            # ═══════════════════════════════════════════════════════════════
-                                            # INTENT ROUTING: small_talk / qa / clarify / search
-                                            # ═══════════════════════════════════════════════════════════════
-                                            intent = extracted_data.get("intent_action", "search") if isinstance(extracted_data, dict) else "search"
-                                            logger.info(f"[INTENT ROUTER] Classified intent: '{intent}' for message: '{msg_body[:50]}'")
-                                            
-                                            if intent in ["small_talk", "clarify", "qa"]:
-                                                # Small-talk, Q&A, or clarification: send conversational reply, do NOT query DB
-                                                reply_text = ai_response if ai_response else "Jee janab, main hazir hoon! 🤝"
-                                                
-                                                # CRITICAL FAILSAFE: Never send empty string to Meta API
-                                                if not reply_text or not str(reply_text).strip():
-                                                    reply_text = "Jee janab, main hazir hoon. Aapki kya madad kar sakta hoon? 🤝"
-                                                
-                                                send_whatsapp_text(tenant_id, from_number, reply_text, whatsapp_token)
+                                            else:
+                                                formatted_budget = format_pkr_currency(session.get('budget', ''))
+                                                ai_response = f"Janab, filhal PKR {formatted_budget} ke budget mein {session.get('location', '')} mein hamari inventory sold out hai. 🏢"
+                                                send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
                                                 save_supabase_message(from_number, "user", msg_body, tenant_id)
-                                                save_supabase_message(from_number, "assistant", reply_text, tenant_id)
-                                                session["chat_history"].append({"role": "assistant", "content": reply_text})
-                                                logger.info(f"[INTENT ROUTER] '{intent}' handled. Skipped DB search. Reply sent.")
+                                                save_supabase_message(from_number, "assistant", ai_response, tenant_id)
                                                 return PlainTextResponse(content="OK", status_code=200)
+                                        
+                                        # 4. FALLBACK: Database query skipped, or parameters missing
+                                        else:
+                                            # Intent is qa, clarify, small_talk, or intent is search but params missing
+                                            reply_text = ai_response if ai_response else "Jee janab, main hazir hoon! 🤝"
                                             
-                                            # intent == "search" -> continue normal qualification flow below
-                                            
+                                            if not reply_text or not str(reply_text).strip():
+                                                reply_text = "Jee janab, main hazir hoon. Aapki kya madad kar sakta hoon? 🤝"
+                                                
                                             # Intercept Urgent Escalation
-                                            if ai_response and "senior agent ko forward" in ai_response.lower():
+                                            if reply_text and "senior agent ko forward" in reply_text.lower():
                                                 try:
                                                     booking_sheet = tenant_config.get("booking_sheet_name")
                                                     prop_sheet = tenant_config.get("property_sheet_name")
                                                     urgent_workspace = GoogleSpreadsheetClient(tenant_id, booking_sheet, prop_sheet)
                                                     urgent_workspace.append_urgent_lead(phone=from_number, user_message=msg_body)
-                                                    
-                                                    # Clear state
                                                     session["state"] = None
                                                     logger.info(f"Escalation triggered for {from_number}. Saved to Urgent_Leads. State preserved.")
                                                 except Exception as e:
                                                     logger.error(f"Failed to route urgent lead: {e}")
                                             
-                                            # CRITICAL FAILSAFE: Never send empty string to Meta API
-                                            if not ai_response or not str(ai_response).strip():
-                                                logger.warning("LLM returned empty string during qualification. Failsafe triggered to prevent Meta API Crash.")
-                                                ai_response = "Maazrat janab, main aapki nayi requirement process kar raha hoon. Barah-e-karam batayein, aap is property ke liye kis shehar ya area ko prefer karenge? 📍"
-                                            
-                                            send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
+                                            send_whatsapp_text(tenant_id, from_number, reply_text, whatsapp_token)
                                             save_supabase_message(from_number, "user", msg_body, tenant_id)
-                                            save_supabase_message(from_number, "assistant", ai_response, tenant_id)
-                                            session["chat_history"].append({"role": "assistant", "content": ai_response})
-                                            
-                                            # HARD LOCK: If they are inspecting a property, stop here.
-                                            if session.get("state") == "INSPECTING_PROPERTY" or session.get("funnel_state") == "INSPECTING_PROPERTY":
-                                                return PlainTextResponse(content="OK", status_code=200)
-                                                
+                                            save_supabase_message(from_number, "assistant", reply_text, tenant_id)
+                                            session["chat_history"].append({"role": "assistant", "content": reply_text})
                                             return PlainTextResponse(content="OK", status_code=200)
 
                                     save_supabase_message(from_number, "user", msg_body, tenant_id)
