@@ -73,7 +73,7 @@ MODEL_ID = "gemini-1.5-flash"
 FALLBACK_MODEL = "gemini-1.5-flash"
 
 # =========================================================================================
-# 🎙️ AUDIO MESSAGE PROCESSING (Meta Download + OpenAI Whisper)
+# 🎙️ AUDIO MESSAGE PROCESSING (Meta Download + OpenAI Whisper )
 # =========================================================================================
 def download_whatsapp_audio(media_id: str, token: str):
     """Fetches media URL from Meta and downloads the raw audio file to a temp file."""
