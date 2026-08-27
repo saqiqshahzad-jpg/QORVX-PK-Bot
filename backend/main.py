@@ -1953,6 +1953,7 @@ Action: Greet them back politely. Acknowledge their past interest naturally. Ask
                                             import json
                                             import re
                                             llm_text = completion.choices[0].message.content or ""
+                                            print(f"RAW LLM RESPONSE: {llm_text}")
                                             
                                             # Clean markdown backticks if the model hallucinates them
                                             cleaned_text = llm_text.strip()
@@ -2134,6 +2135,7 @@ CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON starti
                                                 import json
                                                 import re
                                                 llm_text = completion.choices[0].message.content or ""
+                                                print(f"RAW LLM RESPONSE: {llm_text}")
                                                 
                                                 # Clean markdown backticks if the model hallucinates them
                                                 cleaned_text = llm_text.strip()
@@ -2430,6 +2432,7 @@ CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON starti
                                                 import json
                                                 import re
                                                 llm_text = completion.choices[0].message.content or ""
+                                                print(f"RAW LLM RESPONSE: {llm_text}")
                                                 
                                                 # Clean markdown backticks if the model hallucinates them
                                                 cleaned_text = llm_text.strip()
