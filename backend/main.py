@@ -1724,8 +1724,7 @@ Action: Greet them back politely. Acknowledge their past interest naturally. Ask
                                         if "preferred date (jaise: kal, ya YYYY-MM-DD)" in row["content"] or "preferred date (e.g., tomorrow, or YYYY-MM-DD)" in row["content"]:
                                             if idx + 1 < len(db_history): 
                                                 extracted_date = db_history[idx+1]["content"]
-                                            
-                                    send_whatsapp_text(tenant_id, from_number, "⏳ _Aapke liye live database registries check kar raha hoon, thora sa wait krein..._\n\n~_(is mein ek minute se bhi kam waqt lagta hai)_~", whatsapp_token)
+                                    send_whatsapp_text(tenant_id, from_number, "⏳ _Aapke liye live database registries check kar raha hoon, thora sa wait krein..._", whatsapp_token)
                                     booking_result = handle_calendar_booking(extracted_date, preferred_time, from_number, tenant_id, booking_sheet_name, property_sheet_name)
                                     
                                     if booking_result["status"] == "success":
@@ -2571,7 +2570,7 @@ CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON. DO NO
                                             logger.info("All 5 funnel parameters satisfied and intent is search. Executing database query.")
                                             
                                             # Send the waiting message
-                                            send_whatsapp_text(tenant_id, from_number, "⏳ _Aapke liye behtreen property dhoond rha hu thora sa wait krein..._\n\n~_(is mein ek minute se bhi kam waqt lagta hai)_~", whatsapp_token)
+                                            send_whatsapp_text(tenant_id, from_number, "⏳ _Aapke liye behtreen property dhoond rha hu thora sa wait krein..._", whatsapp_token)
                                             # Wait exactly 3 seconds
                                             time.sleep(3)
                                             
