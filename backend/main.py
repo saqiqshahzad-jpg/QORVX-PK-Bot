@@ -2275,6 +2275,8 @@ CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON starti
         - Location: {session.get('location', 'Not specified')}
         - BHK / Rooms: {session.get('bhk', 'Not specified')}
         - Budget: {format_currency(session.get('budget')) if session.get('budget') else 'Not specified'}
+        - Size Value: {session.get('size_value', 'Not specified')}
+        - Size Unit: {session.get('size_unit', 'Not specified')}
                                         """
 
                                         DYNAMIC_PROMPT = f"""Identity: Aap {agency_name} ke smart, empathetic aur highly professional consultant hain.
@@ -2295,7 +2297,15 @@ You must evaluate the user's message against the Current Extracted Criteria by r
 4. THE LOGICAL CONTRADICTOR: Did the user ask for something impossible (e.g., "5 BHK Plot" or "100 Rs House")?
    - Action: Do NOT update `bhk` for plots. Set intent to `clarify`. Politely explain the logical error (e.g., "Janab, plot mein bedrooms nahi hote...") and ask for clarification.
 5. THE MID-FUNNEL PIVOT: Did the user drastically change their mind (e.g., swapping Buy to Rent, or Plot to House)?
-   - Action: WIPE the old contradictory parameters (set `budget` and `bhk` to `null` in `updated_parameters` if they no longer apply). Set intent to `confirm_change` or `search` and gracefully accept the new context.
+   - Action: WIPE the old contradictory parameters (set `budget`, `bhk`, `size_value`, `size_unit` to `null` in `updated_parameters` if they no longer apply). Set intent to `confirm_change` or `search` and gracefully accept the new context.
+6. ISOLATED UNIT INPUT: Did the user provide a size (e.g., "5 Marla") but NOT a property_type (House, Plot, Commercial)?
+   - Action: Extract the size, set intent to `clarify`, and DO NOT output `search`. Ask politely: "Janab, 5 Marla mein aap plot dekh rahe hain, ghar, ya koi commercial property?"
+7. SINDH / KARACHI UNIT CONTEXT: Did the user say "Gazz" / "Square Yards", or is the location in Sindh/Karachi?
+   - Action: Use "Gazz" or "SqYd" in your `ai_response`. Extract it into `size_unit`. DO NOT force Punjab terminology (Marla/Kanal) on them.
+8. AMBIGUOUS BUILT-AREA CONFLICT: Did the user ask for a "Flat/Apartment" using a land-area unit (Marla, Kanal, Gazz)?
+   - Action: Flats are universally measured in Square Feet. Set intent to `clarify`. Correct them gently: "Janab, flats square feet mein measure hote hain. Kya aap square feet batana pasand karenge, ya hum sirf budget aur location ke hisaab se options dikhayein?"
+9. REGIONAL DIMENSIONAL NUANCES (225 vs 272.25 SqFt): Did the user provide a Marla size and ask for precise dimensions, or are they comparing DHA vs rural properties?
+   - Action: Set intent to `qa` or `clarify`. Add a polite caveat in `ai_response` confirming if they prefer the standard society size (225 sqft) or traditional size (272.25 sqft).
 
 CORE RULES:
 - LANGUAGE: 100% Natural Roman Urdu. Be conversational, not a robot. Gender neutral ("Janab" or "Aap", NEVER "Sir"/"Bhai").
@@ -2312,10 +2322,12 @@ You must respond ONLY in strictly valid JSON format with these exact keys:
   "ai_response": "Conversational response in Roman Urdu.",
   "updated_parameters": {{
     "purpose": "buy" | "rent" | null,
-    "property_type": "house" | "flat" | "plot" | null,
+    "property_type": "house" | "flat" | "plot" | "commercial" | null,
     "location": string | null,
     "bhk": integer | null,
-    "budget": integer | null
+    "budget": integer | null,
+    "size_value": number | null,
+    "size_unit": "Marla" | "Kanal" | "SqFt" | "SqYd" | "Gazz" | null
   }},
   "visit_intent_detected": boolean,
   "search_confirmed_by_user": boolean
@@ -2381,6 +2393,8 @@ CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON. DO NO
                                                 if params.get("location"): session["location"] = params["location"]
                                                 if params.get("bhk") is not None: session["bhk"] = params["bhk"]
                                                 if params.get("budget") is not None: session["budget"] = params["budget"]
+                                                if params.get("size_value") is not None: session["size_value"] = params["size_value"]
+                                                if params.get("size_unit"): session["size_unit"] = params["size_unit"]
                                                 logger.info(f"Session updated from LLM: {params}")
 
                                             if extracted_data.get("search_confirmed_by_user") is True:
@@ -2434,6 +2448,11 @@ CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON. DO NO
                                         is_plot = session.get("property_type") == "plot"
                                         has_bhk = True if is_plot else bool(session.get("bhk"))
                                         
+                                        # STRICT CONDITIONAL GATE: Prevent search if size is given but property type is missing
+                                        if intent == "search" and session.get("size_value") and not session.get("property_type"):
+                                            logger.warning("LLM attempted to search with size but no property type. Overriding to clarify.")
+                                            intent = "clarify"
+                                            
                                         # Check if all 5 parameters are fulfilled
                                         if intent == "search" and session.get("purpose") and session.get("property_type") and session.get("location") and has_bhk and session.get("budget"):
                                             if not session.get("search_confirmed"):
