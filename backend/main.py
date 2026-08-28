@@ -1530,6 +1530,25 @@ async def process_whatsapp_data(data: dict):
                                 active_sessions.append((from_number, session, tenant_id))
 
                                 # =========================================================================================
+                                # 🗣️ VERBAL CONFIRMATION INTERCEPTOR (NATURAL LANGUAGE GATE)
+                                # =========================================================================================
+                                if session.get("awaiting_confirmation") and not btn_id and msg_clean:
+                                    import re
+                                    if re.search(r'\b(yes|haan|ha|han|confirm|search|shuru|theek|ok|done|karo|jee|ji)\b', msg_clean):
+                                        logger.info("User verbally confirmed the search requirements.")
+                                        btn_id = "btn_confirm"
+                                        session["awaiting_confirmation"] = False
+                                    elif re.search(r'\b(change|badal|ghalat|galat|nahi|no|update|masla)\b', msg_clean):
+                                        logger.info("User verbally requested a change.")
+                                        btn_id = "btn_change"
+                                        session["awaiting_confirmation"] = False
+                                    else:
+                                        # If they just provided new requirements directly (e.g. "budget 5 crore"),
+                                        # unblock the gate so the LLM processes it and it will re-trigger the gate later.
+                                        logger.info("User provided arbitrary text at confirmation gate. Passing to LLM.")
+                                        session["awaiting_confirmation"] = False
+
+                                # =========================================================================================
                                 # 🔘 INTERACTIVE BUTTON FAST-TRACK ROUTER
                                 # =========================================================================================
                                 if btn_id:
@@ -2502,6 +2521,7 @@ CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON. DO NO
                                                 ],
                                                 whatsapp_token=whatsapp_token
                                             )
+                                            session["awaiting_confirmation"] = True
                                             save_supabase_message(from_number, "user", msg_body, tenant_id)
                                             save_supabase_message(from_number, "assistant", body_text, tenant_id)
                                             return PlainTextResponse(content="OK", status_code=200)
