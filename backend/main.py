@@ -144,7 +144,7 @@ def robust_chat_completion(messages_array, temperature, max_tokens, json_mode=Fa
         kwargs = {
             "model": MODEL_ID,
             "temperature": 0.0,
-            "max_tokens": 1024,
+            "max_tokens": 4096,
             "messages": optimized_messages
         }
         if json_mode:
@@ -1155,15 +1155,17 @@ You MUST output ONLY a single valid JSON object. Nothing else.
 
 Every response MUST contain exactly these keys, in this order:
 
+<output_schema>
+CRITICAL: You MUST use EXACTLY these root-level keys. Do NOT invent new keys like "ai_response", "intent_action", or "updated_parameters". Do NOT nest the parameters.
 {
-  "_reasoning": "Step-by-step logic. e.g. 'User said 5 marla. Marla is a land unit, not a bedroom count. bhk must remain null.'",
-  "intent": "search" | "qa",
+  "_thinking": "Your internal logic and reasoning step-by-step",
+  "intent": "search" | "qa" | "confirm_change" | "execute_search",
   "location": string | null,
   "purpose": "buy" | "rent" | null,
   "property_type": "Ghar" | "Flat" | "Plot" | null,
   "bhk": integer | null,
   "budget": integer | null,
-  "reply_text": string
+  "reply_text": "Your professional Roman Urdu response to the user"
 }
 
 Rules for the keys:
@@ -1176,7 +1178,7 @@ Rules for the keys:
 - Carry forward all previously confirmed parameters from earlier in the
   conversation unless this message logically overwrites them (see
   contradiction_overwrite rule) or the user starts a clearly new, unrelated search.
-</output_contract>
+</output_schema>
 
 <business_rules>
   <rule name="tone_and_identity">
