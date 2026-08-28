@@ -1460,8 +1460,37 @@ async def process_whatsapp_data(data: dict):
                                 # session is already fetched above for DEDUP check
 
                                 phone_match = regex_module.search(r'(?:\+92|0)[3]\d{2}[\s\-]?\d{7}', msg_body)
-                                if (session is not None and session.get("funnel_state") == "AWAITING_VISIT_INFO") or phone_match:
-                                    logger.info(f"Received visit info from {from_number}: {msg_body}")
+                                is_visit_info = False
+                                
+                                if session is not None and session.get("funnel_state") == "AWAITING_VISIT_INFO":
+                                    verification_prompt = f"""User was asked to provide their FULL NAME to schedule a property visit.
+User's message: "{msg_body}"
+Analyze the message. If the user provided a name (e.g. "Ali", "My name is John", "Ahmed"), return ONLY "VALID_NAME".
+If the user provided a phone number, return ONLY "VALID_PHONE".
+If the user is asking a question, making a statement, or talking about the property (e.g. "How many rooms?", "I have 25 people"), return ONLY "INVALID".
+You must return exactly one of these three strings. Do not explain."""
+                                    try:
+                                        completion = client.chat.completions.create(
+                                            model=MODEL_ID,
+                                            messages=[{"role": "user", "content": verification_prompt}],
+                                            temperature=0.0,
+                                            max_tokens=10
+                                        )
+                                        status = completion.choices[0].message.content.strip()
+                                        if "VALID" in status:
+                                            is_visit_info = True
+                                        else:
+                                            logger.info(f"User failed to provide name for visit. Resetting state. Message: {msg_body}")
+                                            session["state"] = "INSPECTING_PROPERTY"
+                                            session["funnel_state"] = "INSPECTING_PROPERTY"
+                                    except Exception as e:
+                                        logger.error(f"LLM verification failed for visit info: {e}")
+                                        # Fallback to simple word count
+                                        if len(msg_body.split()) <= 4:
+                                            is_visit_info = True
+                                
+                                if is_visit_info or phone_match:
+                                    logger.info(f"Received verified visit info from {from_number}: {msg_body}")
                                     try:
                                         workspace = GoogleSpreadsheetClient(tenant_id, booking_sheet_name, property_sheet_name)
                                         # FIXED: Target the "Leads" tab inside the MASTER DATABASE sheet, NOT BookingSlot
@@ -2277,7 +2306,7 @@ CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON starti
                                     )
                                     
                                     # If all params fulfilled AND message is obvious small-talk, reply politely and skip search
-                                    if is_small_talk_fast and session.get("state") != "INSPECTING_PROPERTY" and session.get("purpose") and session.get("location") and session.get("budget"):
+                                    if not btn_id and not skip_extraction and is_small_talk_fast and session.get("state") != "INSPECTING_PROPERTY" and session.get("purpose") and session.get("location") and session.get("budget"):
                                         logger.info(f"Small-talk fast-track intercepted: '{msg_clean}'. Skipping DB search.")
                                         small_talk_reply = "Jee janab, aapki kisi bhi aur zaroorat ke liye main hazir hoon! Naya search karna ho toh 'Menu' likh kar bhejein. 🤝"
                                         send_whatsapp_text(tenant_id, from_number, small_talk_reply, whatsapp_token)
@@ -2293,7 +2322,8 @@ CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON starti
                                     # ═══════════════════════════════════════════════════════════════
                                     # 🧠 DYNAMIC LLM-POWERED QUALIFICATION (INTENT-SHIFT AWARE)
                                     # ═══════════════════════════════════════════════════════════════
-                                    if session.get("state") != "INSPECTING_PROPERTY":
+                                    extracted_data = {}
+                                    if session.get("state") != "INSPECTING_PROPERTY" and not skip_extraction:
                                         logger.info(f"Evaluating Funnel State using Dynamic LLM Qualification Prompt.")
                                         
                                         raw_agency_tag = session.get("agency_tag") or tenant_config.get("agency_tag", "Real Estate Agency")
@@ -2486,6 +2516,9 @@ CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON. DO NO
                                         if btn_id == "btn_confirm":
                                             intent = "execute_search"
                                             
+                                        if intent == "confirm_change":
+                                            intent = "search"
+                                            
                                         if intent == "execute_search":
                                             session["search_confirmed"] = True
                                             intent = "search"
@@ -2499,31 +2532,6 @@ CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON. DO NO
                                             send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
                                             save_supabase_message(from_number, "user", msg_body, tenant_id)
                                             save_supabase_message(from_number, "assistant", ai_response, tenant_id)
-                                            return PlainTextResponse(content="OK", status_code=200)
-
-                                        if intent == "confirm_change":
-                                            loc = session.get('location', 'N/A')
-                                            prop_type = session.get('property_type', 'N/A')
-                                            bhk = session.get('bhk', 'N/A')
-                                            budget = session.get('budget', 'N/A')
-                                            purpose = session.get('purpose', 'N/A')
-                                            
-                                            param_list = f"📍 Location: {loc}\n🏠 Type: {prop_type}\n🛏️ Rooms: {bhk}\n💰 Budget: {budget}\n🏷️ Purpose: {purpose}"
-                                            body_text = f"{ai_response}\n\n*Aapki Nai Requirements:*\n{param_list}"
-                                            
-                                            send_whatsapp_buttons(
-                                                tenant_id=tenant_id,
-                                                to_number=from_number,
-                                                body_text=body_text,
-                                                buttons_list=[
-                                                    {"id": "btn_confirm", "title": "Haan, Confirm"},
-                                                    {"id": "btn_change", "title": "Change Karein"}
-                                                ],
-                                                whatsapp_token=whatsapp_token
-                                            )
-                                            session["awaiting_confirmation"] = True
-                                            save_supabase_message(from_number, "user", msg_body, tenant_id)
-                                            save_supabase_message(from_number, "assistant", body_text, tenant_id)
                                             return PlainTextResponse(content="OK", status_code=200)
                                         
                                         size_value = session.get("size_value")
@@ -2546,7 +2554,8 @@ CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON. DO NO
                                             intent = "clarify"
                                             
                                         # Trigger the Confirmation Gate if all core params exist AND the specific requirement is met
-                                        if intent == "search" and all([loc, budget, purpose, prop_type]) and has_bhk_or_size:
+                                        is_funnel_complete = all([loc, budget, purpose, prop_type]) and has_bhk_or_size
+                                        if intent in ["search", "qa", "clarify"] and is_funnel_complete:
                                             if not session.get("search_confirmed"):
                                                 loc = str(session.get('location', 'N/A')).title()
                                                 prop_type = str(session.get('property_type', 'N/A')).title()
