@@ -143,8 +143,8 @@ def robust_chat_completion(messages_array, temperature, max_tokens, json_mode=Fa
 
         kwargs = {
             "model": MODEL_ID,
-            "temperature": 0.0,
-            "max_tokens": 4096,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
             "messages": optimized_messages
         }
         if json_mode:
@@ -2152,7 +2152,7 @@ CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON starti
                                             llm_messages = [system_msg] + session.get("chat_history", [])
                                             
                                             # Call LLM with full context
-                                            completion = robust_chat_completion(llm_messages, 0.3, 200, json_mode=True)
+                                            completion = robust_chat_completion(llm_messages, 0.3, 4096, json_mode=True)
                                             try:
                                                 import json
                                                 import re
@@ -2391,7 +2391,7 @@ CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON. DO NO
                                             # CRITICAL: Gemini strictly requires this user role to prevent the 'contents is not specified' error
                                             {"role": "user", "content": msg_body if msg_body else "Please evaluate the funnel state and ask the next question."}
                                         ]
-                                        completion = robust_chat_completion(messages, 0.3, 200, json_mode=True)
+                                        completion = robust_chat_completion(messages, 0.3, 4096, json_mode=True)
                                         try:
                                             import json
                                             import re
