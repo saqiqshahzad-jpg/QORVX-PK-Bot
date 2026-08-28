@@ -75,7 +75,7 @@ client = OpenAI(
     max_retries=0
 )
 MODEL_ID = "gemini-3.6-flash"
-FALLBACK_MODEL = "gemini-3.6-flash"
+FALLBACK_MODEL = "qwen/qwen3.8-27b"
 
 # =========================================================================================
 # 🎙️ AUDIO MESSAGE PROCESSING (Meta Download + OpenAI Whisper )
@@ -154,7 +154,8 @@ def robust_chat_completion(messages_array, temperature, max_tokens, json_mode=Fa
         logger.info(f"Primary LLM failed ({str(e)}), trying fallback...")
         try:
             kwargs["model"] = FALLBACK_MODEL
-            return client.chat.completions.create(**kwargs)
+            groq_client = Groq()
+            return groq_client.chat.completions.create(**kwargs)
         except Exception as e2:
             logger.info(f"Fallback LLM failed: {str(e2)}")
             # Return a fake completion object so the bot never crashes
