@@ -2507,27 +2507,48 @@ CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON. DO NO
                                             save_supabase_message(from_number, "assistant", body_text, tenant_id)
                                             return PlainTextResponse(content="OK", status_code=200)
                                         
-                                        is_plot = session.get("property_type") == "plot"
-                                        has_bhk = True if is_plot else bool(session.get("bhk"))
+                                        size_value = session.get("size_value")
+                                        size_unit = session.get("size_unit")
+                                        bhk = session.get("bhk")
+                                        prop_type = session.get("property_type")
+                                        loc = session.get("location")
+                                        budget = session.get("budget")
+                                        purpose = session.get("purpose")
+
+                                        # Check if size parameters are populated
+                                        has_size = bool(size_value and size_unit)
+                                        
+                                        # The requirement is satisfied if we have BHK, OR if we have Size, OR if it's a plot
+                                        has_bhk_or_size = bool(bhk) or has_size or (prop_type and prop_type.lower() == 'plot')
                                         
                                         # STRICT CONDITIONAL GATE: Prevent search if size is given but property type is missing
                                         if intent == "search" and session.get("size_value") and not session.get("property_type"):
                                             logger.warning("LLM attempted to search with size but no property type. Overriding to clarify.")
                                             intent = "clarify"
                                             
-                                        # Check if all 5 parameters are fulfilled
-                                        if intent == "search" and session.get("purpose") and session.get("property_type") and session.get("location") and has_bhk and session.get("budget"):
+                                        # Trigger the Confirmation Gate if all core params exist AND the specific requirement is met
+                                        if intent == "search" and all([loc, budget, purpose, prop_type]) and has_bhk_or_size:
                                             if not session.get("search_confirmed"):
                                                 loc = str(session.get('location', 'N/A')).title()
                                                 prop_type = str(session.get('property_type', 'N/A')).title()
-                                                bhk = str(session.get('bhk', 'N/A')) if session.get('property_type') != 'plot' else 'N/A'
+                                                
+                                                size_val = session.get('size_value')
+                                                size_unit = session.get('size_unit', '')
+                                                size_str = f"{size_val} {size_unit}".strip() if size_val else 'N/A'
+                                                
+                                                bhk_raw = session.get('bhk')
+                                                bhk = str(bhk_raw) if bhk_raw else 'N/A'
+                                                if is_plot:
+                                                    bhk = 'N/A'
+                                                    
                                                 budget_val = session.get('budget', 0)
                                                 budget_str = format_pkr_currency(budget_val) if budget_val else 'N/A'
                                                 purpose = str(session.get('purpose', 'N/A')).title()
                                                 
-                                                param_list = f"📍 Location: {loc}\n🏠 Type: {prop_type}\n🛏️ Rooms: {bhk}\n💰 Budget: PKR {budget_str}\n🏷️ Purpose: {purpose}"
+                                                param_list = f"📍 Location: {loc}\n🏠 Type: {prop_type}\n📐 Size: {size_str}\n🛏️ Rooms: {bhk}\n💰 Budget: PKR {budget_str}\n🏷️ Purpose: {purpose}"
                                                 ai_prefix = f"{ai_response}\n\n" if ai_response else ""
                                                 body_text = f"{ai_prefix}Janab, property search shuru karne se pehle apni requirements confirm karein:\n\n{param_list}"
+
                                                 
                                                 send_whatsapp_buttons(
                                                     tenant_id=tenant_id,
