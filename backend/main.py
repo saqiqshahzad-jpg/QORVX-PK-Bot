@@ -1107,7 +1107,7 @@ def extract_and_update_session(session: dict, msg_body: str, chat_history: list,
         # Also detect fused patterns like "7caror" or "50k" (digit glued to unit)
         has_fused_budget = bool(re.search(r'\d+\s*(?:crore|caror|karor|cr|cror|crr|lakh|lac|lak|k|m)\b', msg_lower))
         
-        # Extract large numeric values
+        # Extract large numeric values 
         digits = re.findall(r'\b\d+\b', msg_lower)
         if digits or has_budget_context or has_fused_budget:
             val = int(digits[0]) if digits else 0
@@ -1252,6 +1252,14 @@ Rules for the keys:
     words like "rooms", "kamre", "bed", "bedroom", "bhk" (e.g. "5 Marla,
     3 bed ghar" → `bhk: 3`, land size is not tracked in a JSON key here
     and should NOT leak into `bhk`).
+  </rule>
+
+  <rule name="confirmation_gate_logic">
+  1. TEXT CONFIRMATION: If the user types "Yes", "Haan", "Confirm", "Theek hai" in response to the parameter summary, set `intent_action: "execute_search"`. The backend will catch this intent, set `is_confirmed=True`, and search.
+  2. TEXT-BASED PARAMETER CHANGE (PARTIAL UPDATE): If the user types a change (e.g., "Mujhe 2 crore nahi 3 crore ka dikhao"), you MUST isolate and update ONLY the changed parameter.
+     - CRITICAL: Do NOT nullify the other existing parameters (Location, Type, BHK) unless they logically conflict.
+     - Set `intent_action: "parameter_updated"`.
+     - Set `ai_response` to empty.
   </rule>
 </business_rules>
 
@@ -1530,6 +1538,14 @@ You must return exactly one of these three strings. Do not explain."""
                                     session["last_interaction"] = time.time()
 
                                 if session is None:
+                                    if btn_id:
+                                        logger.info(f"Interactive button '{btn_id}' clicked but session expired. Sending fallback.")
+                                        reply_text = "Maazrat Janab, kafi der hone ki wajah se aapka pichla session expire ho gaya hai. Barah-e-karam nai search shuru karne ke liye apni requirements dobara likhein."
+                                        send_whatsapp_text(tenant_id, from_number, reply_text, whatsapp_token)
+                                        save_supabase_message(from_number, "user", f"[Clicked Button {btn_id} on Expired Session]", tenant_id)
+                                        save_supabase_message(from_number, "assistant", reply_text, tenant_id)
+                                        return PlainTextResponse(content="OK", status_code=200)
+                                        
                                     logger.info("New user detected. Sending Menu.")
                                     session = {"purpose": None, "bhk": None, "location": None, "budget": None, "agency_tag": None, "state": None, "intent": None, "greeting_done": True, "chat_history": []}
                                     
@@ -1618,7 +1634,7 @@ You must return exactly one of these three strings. Do not explain."""
 
                                     elif btn_id == "btn_change":
                                         session["search_confirmed"] = False
-                                        ai_response = "Zaroor Janab, batayen aap kya change karna chahte hain? (Misaal ke taur par: 'budget kam karo' ya 'location bahria town kar do') ✏️"
+                                        ai_response = "Zaroor Janab, aap kya tabdeeli chahte hain? (Jaise Location, Budget, ya Property Type change karni hai?) ✏️"
                                         send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
                                         save_supabase_message(from_number, "user", "Clicked Change Karein", tenant_id)
                                         save_supabase_message(from_number, "assistant", ai_response, tenant_id)
@@ -2516,7 +2532,8 @@ CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON. DO NO
                                         if btn_id == "btn_confirm":
                                             intent = "execute_search"
                                             
-                                        if intent == "confirm_change":
+                                        if intent in ["confirm_change", "parameter_updated"]:
+                                            session["search_confirmed"] = False
                                             intent = "search"
                                             
                                         if intent == "execute_search":
