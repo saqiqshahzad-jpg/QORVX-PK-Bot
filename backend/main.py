@@ -2515,7 +2515,7 @@ CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON. DO NO
                                         budget = session.get("budget")
                                         purpose = session.get("purpose")
 
-                                        # Check if size parameters are populated
+                                        # Check if size parameters are  populated
                                         has_size = bool(size_value and size_unit)
                                         
                                         # The requirement is satisfied if we have BHK, OR if we have Size, OR if it's a plot
