@@ -2304,6 +2304,7 @@ CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON starti
         - Budget: {format_currency(session.get('budget')) if session.get('budget') else 'Not specified'}
         - Size Value: {session.get('size_value', 'Not specified')}
         - Size Unit: {session.get('size_unit', 'Not specified')}
+        - Awaiting Confirmation: {session.get('awaiting_confirmation', False)}
                                         """
 
                                         DYNAMIC_PROMPT = f"""<system_identity>
@@ -2334,7 +2335,7 @@ You must evaluate the user's message against the Current Extracted Criteria by r
 </rule>
 <rule name="logical_contradictor">
 4. THE LOGICAL CONTRADICTOR: Did the user ask for something impossible (e.g., "5 BHK Plot" or "100 Rs House")?
-   - Action: Do NOT update `bhk` for plots. Set intent to `clarify`. Politely explain the logical error (e.g., "Janab, plot mein bedrooms nahi hote...") and ask for clarification.
+   - Action: Do NOT update `bhk` for plots, plot mein bedrooms nahi hote...") and ask for clarification.
 </rule>
 <rule name="mid_funnel_pivot">
 5. THE MID-FUNNEL PIVOT: Did the user drastically change their mind (e.g., swapping Buy to Rent, or Plot to House)?
@@ -2360,6 +2361,9 @@ You must evaluate the user's message against the Current Extracted Criteria by r
 10. THE GRATEFUL EXIT: Did the user say "Thank you", "Shukriya", "Zabardast, main soch kar batata hoon", or express that they are done for now?
    - Action: Set intent to `goodbye`. Set `ai_response` to exactly: "Khush Rahein Janab! Kisi bhi waqt mazeed maloomat ke liye yahan message karein. 🌟"
 </rule>
+<rule name="verbal_confirmation">
+11. VERBAL CONFIRMATION: If the user was just asked to confirm their requirements and they reply with agreement (e.g., "Yes", "Haan", "Theek hai", "Search karo") instead of clicking a button, set intent to `execute_search`. DO NOT change any parameters.
+</rule>
 </state_evaluation_protocol>
 
 <core_rules>
@@ -2375,7 +2379,7 @@ JSON FORMAT REQUIRED:
 You must respond ONLY in strictly valid JSON format with these exact keys:
 {{
   "_thinking": "Your step-by-step reasoning based on the State Evaluation Protocol.",
-  "intent_action": "small_talk" | "qa" | "clarify" | "search" | "confirm_change" | "goodbye",
+  "intent_action": "small_talk" | "qa" | "clarify" | "search" | "confirm_change" | "execute_search" | "goodbye",
   "ai_response": "Conversational response in Roman Urdu.",
   "updated_parameters": {{
     "purpose": "buy" | "rent" | null,
@@ -2472,6 +2476,10 @@ CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON. DO NO
                                         intent = extracted_data.get("intent_action", "search") if isinstance(extracted_data, dict) else "search"
                                         
                                         if btn_id == "confirm_search_yes":
+                                            intent = "execute_search"
+                                            
+                                        if intent == "execute_search":
+                                            session["search_confirmed"] = True
                                             intent = "search"
                                             
                                         logger.info(f"[INTENT ROUTER] Classified intent: '{intent}' for message: '{msg_body[:50]}'")
@@ -2541,11 +2549,13 @@ CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON. DO NO
                                                     ],
                                                     whatsapp_token=whatsapp_token
                                                 )
+                                                session["awaiting_confirmation"] = True
                                                 save_supabase_message(from_number, "assistant", body_text, tenant_id)
                                                 return PlainTextResponse(content="OK", status_code=200)
 
                                             # Reset for future searches
                                             session["search_confirmed"] = False
+                                            session["awaiting_confirmation"] = False
 
                                             logger.info("All 5 funnel parameters satisfied and intent is search. Executing database query.")
                                             
