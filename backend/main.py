@@ -448,17 +448,31 @@ def query_property_database(listing_type: str, bhk: int, city_society: str, budg
         if df.empty:
             return []
 
-        # 3. DUAL-COLUMN Location Filter (Check both City and Society_Area)
+        # 3. DUAL-COLUMN SMART Location Filter
         if city_society:
-            loc = city_society.strip().lower()
+            loc_str = city_society.strip().lower().replace(',', ' ')
+            loc_tokens = set([w for w in loc_str.split() if len(w) > 2])
+            
             city_col = get_col("city")
             society_col = get_col("society_area")
             
-            mask_city = df[city_col].astype(str).str.lower().str.contains(loc, na=False) if city_col else pd.Series(False, index=df.index)
-            mask_society = df[society_col].astype(str).str.lower().str.contains(loc, na=False) if society_col else pd.Series(False, index=df.index)
+            def smart_match(db_val):
+                if pd.isna(db_val): return False
+                db_str = str(db_val).lower().replace(',', ' ')
+                
+                # Direct substring match
+                if loc_str in db_str or db_str in loc_str:
+                    return True
+                
+                # Token intersection match
+                db_tokens = set([w for w in db_str.split() if len(w) > 2])
+                return len(loc_tokens.intersection(db_tokens)) > 0
+
+            mask_city = df[city_col].apply(smart_match) if city_col else pd.Series(False, index=df.index)
+            mask_society = df[society_col].apply(smart_match) if society_col else pd.Series(False, index=df.index)
             
             df = df[mask_city | mask_society]
-            logger.info(f"After Location Filter: {len(df)} properties left.")
+            logger.info(f"After Smart Location Filter '{city_society}': {len(df)} properties left.")
 
         # After location filter, strictly filter property type
         if property_type:
