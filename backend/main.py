@@ -1559,6 +1559,20 @@ async def process_whatsapp_data(data: dict):
                                         save_supabase_message(from_number, "assistant", ai_response, tenant_id)
                                         return PlainTextResponse(content="OK", status_code=200)
 
+                                    elif btn_id == "btn_confirm_search_start":
+                                        session["search_confirmed"] = True
+                                        msg_body = "Yes I confirm my requirements, start search."
+                                        save_supabase_message(from_number, "user", "Clicked Confirm ✅", tenant_id)
+                                        skip_extraction = True
+
+                                    elif btn_id == "btn_change_requirements":
+                                        session["search_confirmed"] = False
+                                        ai_response = "Zaroor Janab, batayen aap kya change karna chahte hain? (Misaal ke taur par: 'budget kam karo' ya 'location bahria town kar do') ✏️"
+                                        send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
+                                        save_supabase_message(from_number, "user", "Clicked Change ✏️", tenant_id)
+                                        save_supabase_message(from_number, "assistant", ai_response, tenant_id)
+                                        return PlainTextResponse(content="OK", status_code=200)
+
                                     elif btn_id == "btn_next":
                                         session["state"] = None
                                         ai_response = f"Zaroor janab! Main aapko isi criteria mein agli behtareen property nikal kar deta hoon... 🔍"
@@ -2303,7 +2317,7 @@ STRICT ANTI-HALLUCINATION RULES:
    - "small_talk": If the user is just greeting, saying thanks, ok, yes, etc., you MUST set "intent_action": "small_talk". Provide the answer concisely in ai_response.
    - "qa": CRITICAL! You MUST output "qa" if the user asks ANY specific question about a property's features, amenities, location, rooms, park, gas, water, or details (e.g., "is ghar mein park hai?", "kahan par hai?", "rooms kitne hain?"). NEVER use "search" for these follow-up questions.
    - "search": ONLY set "intent_action": "search" when the user is explicitly providing NEW funnel parameters (like changing their budget) or actively asking to find a brand NEW property.
-   - "clarify": If the user's input is confusing, ambiguous, or if they reply to an image with an unclear text (e.g., "yeh wala?", "hmm"), set "intent_action": "clarify". In ai_response, explicitly ask for confirmation: "Janab, kya aap is property ke hawalay se kuch poochna chah rahe hain? Ya koi aur option dekhna chahenge?"
+   - "clarify": CRITICAL: If the user's input is confusing, ambiguous, or if they mention 'marla' or area sizes without explicitly confirming a property type or search intent, DO NOT GUESS AND DO NOT OUTPUT SEARCH. Set "intent_action": "clarify". In ai_response, explicitly and politely ask for clarification (e.g. 'Janab, main thora confuse ho gaya, kya aap ghar dhoond rahe hain ya plot?').
    - "confirm_change": ONLY set "intent_action": "confirm_change" if the user explicitly changes a parameter mid-funnel (e.g., changes location from Lahore to Islamabad, or updates their budget). Set ai_response to: "Janab, aapne apni requirements update ki hain. Kya main in details ke sath search shuru karun?
    RULE: If intent_action is 'small_talk', 'clarify', or 'qa', DO NOT output property parameter updates. Just write a natural conversational reply.
    IMPORTANT CONTEXT RULE: If the user asks a question about a property's features (like 'park hai?') and you answer it, you MUST append this polite instruction at the end of your response to educate the user: '
@@ -2313,6 +2327,7 @@ STRICT ANTI-HALLUCINATION RULES:
 - "ai_response": Your conversational response in Roman Urdu.
 - "intent_action": (string) One of: "small_talk", "qa", "clarify", or "search".
 - "visit_intent_detected": (boolean) If the user's message expresses ANY desire to visit, see, tour, or inspect the property in person, set this to true. Otherwise false.
+- "search_confirmed_by_user": (boolean) If the user explicitly confirms their property requirements (e.g. "confirm", "haan search karo", "theek hai"), set this to true. Otherwise false.
 - "updated_parameters": A JSON object containing the latest state of the 5 funnel parameters (purpose, property_type, location, bhk, budget) based on the user's message. Preserve existing values unless the user explicitly updates them. E.g. {{"purpose": "buy", "property_type": "house", "location": "Karachi", "bhk": 3, "budget": 15000000}}. Note budget MUST be an integer.
 
 CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON starting with {{ and ending with }}. DO NOT output any conversational text, greetings, or markdown formatting like ```json. Your entire response must be parseable by Python's json.loads().
@@ -2377,6 +2392,9 @@ CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON starti
                                                 if params.get("budget") is not None: session["budget"] = params["budget"]
                                                 logger.info(f"Session updated from LLM: {params}")
 
+                                            if extracted_data.get("search_confirmed_by_user") is True:
+                                                session["search_confirmed"] = True
+
                                             if extracted_data.get("visit_intent_detected") is True:
                                                 session["state"] = "SCHEDULING_VISIT"
                                                 session["funnel_state"] = "AWAITING_VISIT_INFO"
@@ -2427,12 +2445,39 @@ CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON starti
                                         
                                         # Check if all 5 parameters are fulfilled
                                         if intent == "search" and session.get("purpose") and session.get("property_type") and session.get("location") and has_bhk and session.get("budget"):
+                                            if not session.get("search_confirmed"):
+                                                loc = str(session.get('location', 'N/A')).title()
+                                                prop_type = str(session.get('property_type', 'N/A')).title()
+                                                bhk = str(session.get('bhk', 'N/A')) if session.get('property_type') != 'plot' else 'N/A'
+                                                budget_val = session.get('budget', 0)
+                                                budget_str = format_pkr_currency(budget_val) if budget_val else 'N/A'
+                                                purpose = str(session.get('purpose', 'N/A')).title()
+                                                
+                                                param_list = f"📍 Location: {loc}\n🏠 Type: {prop_type}\n🛏️ Rooms: {bhk}\n💰 Budget: PKR {budget_str}\n🏷️ Purpose: {purpose}"
+                                                body_text = f"Janab, property search shuru karne se pehle apni requirements confirm karein:\n\n{param_list}"
+                                                
+                                                send_whatsapp_buttons(
+                                                    tenant_id=tenant_id,
+                                                    to_number=from_number,
+                                                    body_text=body_text,
+                                                    buttons_list=[
+                                                        {"id": "btn_confirm_search_start", "title": "Confirm ✅"},
+                                                        {"id": "btn_change_requirements", "title": "Change ✏️"}
+                                                    ],
+                                                    whatsapp_token=whatsapp_token
+                                                )
+                                                save_supabase_message(from_number, "assistant", body_text, tenant_id)
+                                                return PlainTextResponse(content="OK", status_code=200)
+
+                                            # Reset for future searches
+                                            session["search_confirmed"] = False
+
                                             logger.info("All 5 funnel parameters satisfied and intent is search. Executing database query.")
                                             
                                             # Send the waiting message
-                                            send_whatsapp_text(tenant_id, from_number, "⏳ Janab, main aapki requirements ke mutabiq behtareen properties dhoond raha hoon. Barah-e-karam 5 seconds intezar farmayen...", whatsapp_token)
-                                            # Wait exactly 5 seconds
-                                            time.sleep(5)
+                                            send_whatsapp_text(tenant_id, from_number, "⏳ _Aapke liye behtreen property dhoond rha hu thora sa wait krein..._\n\n_it takes less than a minute_", whatsapp_token)
+                                            # Wait exactly 3 seconds
+                                            time.sleep(3)
                                             
                                             results = query_property_database(
                                                 listing_type=session["purpose"],
