@@ -2130,12 +2130,16 @@ STRICT RULES FOR YOUR RESPONSE:
 - You must ALWAYS produce a helpful, courteous response.
 4. ZERO HALLUCINATIONS: Agar koi baat BACKGROUND CONTEXT mein nahi hai, toh politely maazrat karein aur kahein: "Janab, is detail ke liye main agent se baat karwa deta hoon, barah-e-karam apna Name aur Email share kardein."
 5. GENDER-NEUTRAL: Always use 'Janab' or 'Aap'. NEVER use 'Sir' or 'Bhai'.
-5. TONE: 100% Conversational and natural Roman Urdu. Like a helpful human, not a robot.
-6. OFF-TOPIC RECOVERY: Agar user koi aisi baat kare jo property se related nahi hai, toh politely uski baat ka short jawab dein aur aakhir mein add karein: "Waise janab, jo property maine aapko abhi dikhayi hai, kya aap uska visit schedule karna chahenge?"
+6. TONE: 100% Conversational and natural Roman Urdu. Like a helpful human, not a robot.
+7. OFF-TOPIC RECOVERY: Agar user koi aisi baat kare jo property se related nahi hai, toh politely uski baat ka short jawab dein aur aakhir mein add karein: "Waise janab, jo property maine aapko abhi dikhayi hai, kya aap uska visit schedule karna chahenge?"
 IMPORTANT CONTEXT RULE: If the user asks a question about a property's features (like 'park hai?') and you answer it, you MUST append this polite instruction at the end of your response to educate the user: '\n\n(Note: Janab, behtar rehnumai ke liye, koshish karein ke jis property ki aap baat kar rahe hain, uski tasveer (image) par reply kar ke sawal poochein.)'
-7. JSON FORMAT REQUIRED: You must respond ONLY in strictly valid JSON format with these exact keys:
+8. GOODBYE & THANK YOU: Agar user kahe "Shukriya", "Zabardast", "Main soch kar batata hoon", ya conversation end karne ki koshish kare:
+- Set `ai_response` to EXACTLY: "Khush Rahein Janab! Kisi bhi waqt mazeed maloomat ke liye yahan message karein. 🌟"
+- Set `end_conversation_detected` to true.
+9. JSON FORMAT REQUIRED: You must respond ONLY in strictly valid JSON format with these exact keys:
 - "ai_response": Your conversational response in Roman Urdu.
 - "visit_intent_detected": (boolean) If the user's message expresses ANY desire to visit, see, tour, or inspect the property in person (e.g., 'visit kb kr skte', 'dekhna hai'), set this to true. Otherwise false.
+- "end_conversation_detected": (boolean) If the user is expressing gratitude or ending the conversation, set this to true. Otherwise false.
 
 CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON starting with {{ and ending with }}. DO NOT output any conversational text, greetings, or markdown formatting like ```json. Your entire response must be parseable by Python's json.loads().
 """
@@ -2187,6 +2191,15 @@ CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON starti
                                                         }
                                                 ai_response = extracted_data.get("ai_response", "")
                                                 
+                                                if extracted_data.get("end_conversation_detected") is True:
+                                                    ai_response = "Khush Rahein Janab! Kisi bhi waqt mazeed maloomat ke liye yahan message karein. 🌟"
+                                                    session["state"] = None
+                                                    session["active_property"] = None
+                                                    send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
+                                                    save_supabase_message(from_number, "user", msg_body, tenant_id)
+                                                    save_supabase_message(from_number, "assistant", ai_response, tenant_id)
+                                                    return PlainTextResponse(content="OK", status_code=200)
+
                                                 if extracted_data.get("visit_intent_detected") is True:
                                                     session["state"] = "SCHEDULING_VISIT"
                                                     session["funnel_state"] = "AWAITING_VISIT_INFO"
@@ -2327,6 +2340,10 @@ You must evaluate the user's message against the Current Extracted Criteria by r
 9. REGIONAL DIMENSIONAL NUANCES (225 vs 272.25 SqFt): Did the user provide a Marla size and ask for precise dimensions, or are they comparing DHA vs rural properties?
    - Action: Set intent to `qa` or `clarify`. Add a polite caveat in `ai_response` confirming if they prefer the standard society size (225 sqft) or traditional size (272.25 sqft).
 </rule>
+<rule name="grateful_exit">
+10. THE GRATEFUL EXIT: Did the user say "Thank you", "Shukriya", "Zabardast, main soch kar batata hoon", or express that they are done for now?
+   - Action: Set intent to `goodbye`. Set `ai_response` to exactly: "Khush Rahein Janab! Kisi bhi waqt mazeed maloomat ke liye yahan message karein. 🌟"
+</rule>
 </state_evaluation_protocol>
 
 <core_rules>
@@ -2342,7 +2359,7 @@ JSON FORMAT REQUIRED:
 You must respond ONLY in strictly valid JSON format with these exact keys:
 {{
   "_thinking": "Your step-by-step reasoning based on the State Evaluation Protocol.",
-  "intent_action": "small_talk" | "qa" | "clarify" | "search" | "confirm_change",
+  "intent_action": "small_talk" | "qa" | "clarify" | "search" | "confirm_change" | "goodbye",
   "ai_response": "Conversational response in Roman Urdu.",
   "updated_parameters": {{
     "purpose": "buy" | "rent" | null,
@@ -2446,6 +2463,15 @@ CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON. DO NO
                                             
                                         logger.info(f"[INTENT ROUTER] Classified intent: '{intent}' for message: '{msg_body[:50]}'")
                                         
+                                        if intent == "goodbye":
+                                            ai_response = "Khush Rahein Janab! Kisi bhi waqt mazeed maloomat ke liye yahan message karein. 🌟"
+                                            session["state"] = None
+                                            session["active_property"] = None
+                                            send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
+                                            save_supabase_message(from_number, "user", msg_body, tenant_id)
+                                            save_supabase_message(from_number, "assistant", ai_response, tenant_id)
+                                            return PlainTextResponse(content="OK", status_code=200)
+
                                         if intent == "confirm_change":
                                             loc = session.get('location', 'N/A')
                                             prop_type = session.get('property_type', 'N/A')
