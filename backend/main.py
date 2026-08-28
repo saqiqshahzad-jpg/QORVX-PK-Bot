@@ -719,7 +719,14 @@ def send_whatsapp_media(tenant_id: str, to_number: str, media_url: str, media_ty
 def send_whatsapp_buttons(tenant_id: str, to_number: str, body_text: str, buttons_list: list, whatsapp_token: str):
     url = f"https://graph.facebook.com/v25.0/{tenant_id}/messages"
     headers = {"Authorization": f"Bearer {whatsapp_token}", "Content-Type": "application/json"}
-    formatted_buttons = [{"type": "reply", "reply": {"id": f"btn_{i}", "title": btn}} for i, btn in enumerate(buttons_list[:3])]
+    
+    formatted_buttons = []
+    for i, btn in enumerate(buttons_list[:3]):
+        if isinstance(btn, dict):
+            formatted_buttons.append({"type": "reply", "reply": {"id": btn.get("id", f"btn_{i}"), "title": str(btn.get("title", ""))[:20]}})
+        else:
+            formatted_buttons.append({"type": "reply", "reply": {"id": f"btn_{i}", "title": str(btn)[:20]}})
+            
     payload = {
         "messaging_product": "whatsapp", "recipient_type": "individual", "to": to_number, "type": "interactive",
         "interactive": {"type": "button", "body": {"text": body_text}, "action": {"buttons": formatted_buttons}}
@@ -1561,31 +1568,19 @@ async def process_whatsapp_data(data: dict):
                                         save_supabase_message(from_number, "assistant", ai_response, tenant_id)
                                         return PlainTextResponse(content="OK", status_code=200)
 
-                                    elif btn_id == "change_req_no":
-                                        session["purpose"] = None
-                                        session["property_type"] = None
-                                        session["location"] = None
-                                        session["bhk"] = None
-                                        session["budget"] = None
-                                        ai_response = "Zaroor Janab, batayen aapki nai requirements kya hain? 🔄"
-                                        send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
-                                        save_supabase_message(from_number, "user", "Clicked Nahi, Change Karein", tenant_id)
-                                        save_supabase_message(from_number, "assistant", ai_response, tenant_id)
-                                        return PlainTextResponse(content="OK", status_code=200)
-
-                                    elif btn_id == "btn_confirm_search_start":
-                                        session["search_confirmed"] = True
-                                        msg_body = "Yes I confirm my requirements, start search."
-                                        save_supabase_message(from_number, "user", "Clicked Confirm ✅", tenant_id)
-                                        skip_extraction = True
-
-                                    elif btn_id == "btn_change_requirements":
+                                    elif btn_id == "btn_change":
                                         session["search_confirmed"] = False
                                         ai_response = "Zaroor Janab, batayen aap kya change karna chahte hain? (Misaal ke taur par: 'budget kam karo' ya 'location bahria town kar do') ✏️"
                                         send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
-                                        save_supabase_message(from_number, "user", "Clicked Change ✏️", tenant_id)
+                                        save_supabase_message(from_number, "user", "Clicked Change Karein", tenant_id)
                                         save_supabase_message(from_number, "assistant", ai_response, tenant_id)
                                         return PlainTextResponse(content="OK", status_code=200)
+
+                                    elif btn_id == "btn_confirm":
+                                        session["search_confirmed"] = True
+                                        msg_body = "Yes I confirm my requirements, start search."
+                                        save_supabase_message(from_number, "user", "Clicked Haan, Confirm", tenant_id)
+                                        skip_extraction = True
 
                                     elif btn_id == "btn_next":
                                         session["state"] = None
@@ -1702,8 +1697,8 @@ Action: Greet them back politely. Acknowledge their past interest naturally. Ask
                                 # =========================================================================================
                                 if msg_body == "More Options ➕":
                                     send_whatsapp_buttons(
-                                        tenant_id, from_number, "Here are more ways we can serve you 🏛️",
-                                        ["Sell Property 💰", "Book Strategy 📅"],
+                                        tenant_id, from_number, "Janab, hum mazeed in tareeqon se aapki madad kar sakte hain",
+                                        [{"title": "Sell Property", "id": "intent_sell"}, {"title": "Book Strategy", "id": "book_strategy"}],
                                         whatsapp_token
                                     )
                                     return PlainTextResponse(content="OK", status_code=200)
@@ -1712,40 +1707,35 @@ Action: Greet them back politely. Acknowledge their past interest naturally. Ask
                                 # 📅 STATE-MACHINE INTERCEPTORS: DYNAMIC CALENDAR BOOKING CORE
                                 # =========================================================================================
                                 elif msg_body == "Book Strategy 📅":
-                                    ai_response = "Excellent choice. Let's align your investment roadmap. Please state your preferred date (e.g., tomorrow, or YYYY-MM-DD): 📅"
+                                    ai_response = "Behtareen intikhab. Apna preferred date bataiye (jaise: kal, ya YYYY-MM-DD):"
                                     save_supabase_message(from_number, "user", msg_body, tenant_id)
                                     save_supabase_message(from_number, "assistant", ai_response, tenant_id)
                                     send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
                                     return PlainTextResponse(content="OK", status_code=200)
 
-                                elif "preferred date (e.g., tomorrow, or YYYY-MM-DD)" in last_ai_msg:
-                                    preferred_date = msg_body
-                                    ai_response = f"Got it, looking at scheduling parameters for {preferred_date}. Now, please state your preferred Time Slot (e.g., 4:00 PM, 5:00 PM, 6:00 PM): ⏰"
-                                    save_supabase_message(from_number, "user", msg_body, tenant_id)
-                                    save_supabase_message(from_number, "assistant", ai_response, tenant_id)
-                                    send_whatsapp_text(tenant_id, from_number, ai_response, whatsapp_token)
-                                    return PlainTextResponse(content="OK", status_code=200)
-
-                                elif "preferred Time Slot" in last_ai_msg or "outside scheduled active hours" in last_ai_msg or "currently blocked" in last_ai_msg or "completely allocated" in last_ai_msg or "valid hourly slot" in last_ai_msg:
+                                elif session.get("state") == "SCHEDULING_VISIT":
+                                    logger.info(f"Processing visit scheduling context: {msg_body}")
+                                    session["state"] = None
+                                    session["funnel_state"] = None
                                     preferred_time = msg_body
                                     extracted_date = "tomorrow"
                                     
                                     for idx, row in enumerate(db_history):
-                                        if "preferred date (e.g., tomorrow, or YYYY-MM-DD)" in row["content"]:
+                                        if "preferred date (jaise: kal, ya YYYY-MM-DD)" in row["content"] or "preferred date (e.g., tomorrow, or YYYY-MM-DD)" in row["content"]:
                                             if idx + 1 < len(db_history): 
                                                 extracted_date = db_history[idx+1]["content"]
                                             
-                                    send_whatsapp_text(tenant_id, from_number, "Checking live database registries... ⏳", whatsapp_token)
+                                    send_whatsapp_text(tenant_id, from_number, "⏳ _Aapke liye live database registries check kar raha hoon, thora sa wait krein..._\n\n~_(is mein ek minute se bhi kam waqt lagta hai)_~", whatsapp_token)
                                     booking_result = handle_calendar_booking(extracted_date, preferred_time, from_number, tenant_id, booking_sheet_name, property_sheet_name)
                                     
                                     if booking_result["status"] == "success":
                                         confirmed_slot = booking_result.get("slot", preferred_time.upper())
-                                        ai_response = f"Priority Confirmed! 🔒 I have securely locked your calendar slot on {extracted_date} at {confirmed_slot}. An executive brief has been dispatched."
+                                        ai_response = f"Priority Confirm ho gayi! Maine aapka time {extracted_date} ko {confirmed_slot} baje lock kar diya hai."
                                     elif booking_result["status"] == "invalid_time":
-                                        ai_response = "Our executive agents operate exclusively Monday through Saturday, from 12:00 PM to 6:00 PM. 🕰️ Please reply with a valid hourly slot (e.g., 2:00 PM)."
+                                        ai_response = "Hamare agent sirf Monday se Saturday, dopehar 12:00 PM se 6:00 PM tak dastiyab hote hain. Barah-e-karam valid time batayen (jaise: 2:00 PM)."
                                     elif booking_result["status"] == "taken":
                                         alt_t = booking_result["alternative"]
-                                        ai_response = f"Ah, the requested time is currently blocked by another investor. 🛑 However, I can lock an elite slot for you on {extracted_date} at {alt_t}. Shall we reserve that instead?"
+                                        ai_response = f"Maazrat, yeh time kisi aur ne book kar liya hai. Lekin main {extracted_date} ko {alt_t} par aapke liye slot lock kar sakta hoon. Kya hum isay reserve kar lein?"
                                     elif booking_result["status"] == "full":
                                         ai_response = f"Our priority calendar for {extracted_date.upper()} is completely allocated. 🏛️ Please reply with an alternative date to query the grid."
                                     else:
@@ -2475,7 +2465,7 @@ CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON. DO NO
                                         # 3. CONDITIONAL DATABASE QUERY
                                         intent = extracted_data.get("intent_action", "search") if isinstance(extracted_data, dict) else "search"
                                         
-                                        if btn_id == "confirm_search_yes":
+                                        if btn_id == "btn_confirm":
                                             intent = "execute_search"
                                             
                                         if intent == "execute_search":
@@ -2508,8 +2498,8 @@ CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON. DO NO
                                                 to_number=from_number,
                                                 body_text=body_text,
                                                 buttons_list=[
-                                                    {"id": "confirm_search_yes", "title": "Haan, Confirm 👍"},
-                                                    {"id": "change_req_no", "title": "Nahi, Change Karein 🔄"}
+                                                    {"id": "btn_confirm", "title": "Haan, Confirm"},
+                                                    {"id": "btn_change", "title": "Change Karein"}
                                                 ],
                                                 whatsapp_token=whatsapp_token
                                             )
@@ -2544,8 +2534,8 @@ CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON. DO NO
                                                     to_number=from_number,
                                                     body_text=body_text,
                                                     buttons_list=[
-                                                        {"id": "btn_confirm_search_start", "title": "Confirm ✅"},
-                                                        {"id": "btn_change_requirements", "title": "Change ✏️"}
+                                                        {"id": "btn_confirm", "title": "Haan, Confirm"},
+                                                        {"id": "btn_change", "title": "Change Karein"}
                                                     ],
                                                     whatsapp_token=whatsapp_token
                                                 )
