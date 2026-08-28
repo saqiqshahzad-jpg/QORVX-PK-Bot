@@ -2372,8 +2372,7 @@ You must respond ONLY in strictly valid JSON format with these exact keys:
     "size_value": number | null,
     "size_unit": "Marla" | "Kanal" | "SqFt" | "SqYd" | "Gazz" | null
   }},
-  "visit_intent_detected": boolean,
-  "search_confirmed_by_user": boolean
+  "visit_intent_detected": boolean
 }}
 
 CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON. DO NOT output markdown formatting like ```json.
@@ -2441,8 +2440,6 @@ CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON. DO NO
                                                 if params.get("size_unit"): session["size_unit"] = params["size_unit"]
                                                 logger.info(f"Session updated from LLM: {params}")
 
-                                            if extracted_data.get("search_confirmed_by_user") is True:
-                                                session["search_confirmed"] = True
 
                                             if extracted_data.get("visit_intent_detected") is True:
                                                 session["state"] = "SCHEDULING_VISIT"
@@ -2517,7 +2514,8 @@ CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON. DO NO
                                                 purpose = str(session.get('purpose', 'N/A')).title()
                                                 
                                                 param_list = f"📍 Location: {loc}\n🏠 Type: {prop_type}\n🛏️ Rooms: {bhk}\n💰 Budget: PKR {budget_str}\n🏷️ Purpose: {purpose}"
-                                                body_text = f"Janab, property search shuru karne se pehle apni requirements confirm karein:\n\n{param_list}"
+                                                ai_prefix = f"{ai_response}\n\n" if ai_response else ""
+                                                body_text = f"{ai_prefix}Janab, property search shuru karne se pehle apni requirements confirm karein:\n\n{param_list}"
                                                 
                                                 send_whatsapp_buttons(
                                                     tenant_id=tenant_id,
@@ -2538,7 +2536,7 @@ CRITICAL: You are a strict JSON-only API. You MUST output ONLY valid JSON. DO NO
                                             logger.info("All 5 funnel parameters satisfied and intent is search. Executing database query.")
                                             
                                             # Send the waiting message
-                                            send_whatsapp_text(tenant_id, from_number, "⏳ _Aapke liye behtreen property dhoond rha hu thora sa wait krein..._\n\n_it takes less than a minute_", whatsapp_token)
+                                            send_whatsapp_text(tenant_id, from_number, "⏳ _Aapke liye behtreen property dhoond rha hu thora sa wait krein..._\n\n~_(is mein ek minute se bhi kam waqt lagta hai)_~", whatsapp_token)
                                             # Wait exactly 3 seconds
                                             time.sleep(3)
                                             
