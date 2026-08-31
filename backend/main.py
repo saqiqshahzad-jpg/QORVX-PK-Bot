@@ -56,7 +56,7 @@ def get_user_session(phone: str, tenant_id: str):
         "active_property": None, "archived_intents": [], "last_interaction": time.time()
     }
     try:
-        url = f"{SUPABASE_URL}/rest/v1/user_sessions?phone=eq.{phone}&tenant_id=eq.{tenant_id}&select=*"
+        url = f"{SUPABASE_URL}/rest/v1/user_sessions?phone_number=eq.{phone}&tenant_id=eq.{tenant_id}&select=*"
         res = requests.get(url, headers=get_supabase_headers(), timeout=10)
         if res.status_code == 200 and res.json():
             data = res.json()[0].get("session_data", {})
@@ -67,7 +67,7 @@ def get_user_session(phone: str, tenant_id: str):
 
 def save_user_session(phone: str, tenant_id: str, session: dict):
     session["last_interaction"] = time.time()
-    payload = {"phone": phone, "tenant_id": tenant_id, "session_data": session}
+    payload = {"phone_number": phone, "tenant_id": tenant_id, "session_data": session}
     try:
         url = f"{SUPABASE_URL}/rest/v1/user_sessions"
         headers = get_supabase_headers()
@@ -77,7 +77,7 @@ def save_user_session(phone: str, tenant_id: str, session: dict):
         logger.error(f"Supabase Session save failed: {e}")
 
 def save_chat_history(phone: str, tenant_id: str, role: str, content: str):
-    payload = {"phone": phone, "tenant_id": tenant_id, "role": role, "content": content}
+    payload = {"phone_number": phone, "tenant_id": tenant_id, "role": role, "content": content}
     try:
         url = f"{SUPABASE_URL}/rest/v1/whatsapp_history"
         requests.post(url, headers=get_supabase_headers(), json=payload, timeout=10)
