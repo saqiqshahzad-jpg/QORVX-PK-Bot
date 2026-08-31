@@ -273,8 +273,10 @@ def process_whatsapp_data(data: dict):
             if not wa_token: continue
             
             for msg in val.get("messages", []):
+              try:
                 from_number = msg["from"]
                 msg_id = msg.get("id")
+                logger.info(f"📩 Message from {from_number} | type={msg.get('type')} | id={msg_id}")
                 
                 # Dedup Engine
                 now = time.time()
@@ -306,6 +308,7 @@ def process_whatsapp_data(data: dict):
                     return
                 
                 if not msg_body: continue
+                logger.info(f"💬 Processing: '{msg_body}' from {from_number}")
                 
                 session = get_user_session(from_number, tenant_id)
                 chat_hist = session["chat_history"]
@@ -388,12 +391,14 @@ def process_whatsapp_data(data: dict):
                 if loc: session["location"] = loc
 
                 # LLM State
+                logger.info(f"🤖 Calling LLM for {from_number}...")
                 sys_prompt = PK_MASTER_PROMPT + f"\n\nCURRENT SESSION STATE: {json.dumps(session)}"
                 messages = [{"role": "system", "content": sys_prompt}]
                 messages.extend(chat_hist[-6:])
                 messages.append({"role": "user", "content": msg_body})
                 
                 llm_res = chat_completion_fallback(messages)
+                logger.info(f"✅ LLM Response received: {llm_res[:100]}...")
                 
                 # Parse LLM JSON
                 ai_reply = llm_res
@@ -410,7 +415,8 @@ def process_whatsapp_data(data: dict):
                             ai_reply = parsed.get("reply_text", "Sari details mil gayi hain. Kya main search shuru karun? (Haan / Nahi)")
                         else:
                             ai_reply = parsed.get("reply_text", llm_res)
-                    except: pass
+                    except Exception as parse_err:
+                        logger.warning(f"⚠️ JSON parse failed: {parse_err}")
                 
                 chat_hist.append({"role": "user", "content": msg_body})
                 chat_hist.append({"role": "assistant", "content": ai_reply})
@@ -420,7 +426,15 @@ def process_whatsapp_data(data: dict):
                 save_chat_history(from_number, tenant_id, "assistant", ai_reply)
                 save_user_session(from_number, tenant_id, session)
                 
+                logger.info(f"📤 Sending reply to {from_number}: {ai_reply[:80]}...")
                 send_whatsapp_text(tenant_id, from_number, ai_reply, wa_token)
+
+              except Exception as fatal_err:
+                logger.error(f"💀 FATAL ERROR processing msg from {msg.get('from', 'unknown')}: {fatal_err}", exc_info=True)
+                try:
+                    send_whatsapp_text(tenant_id, msg.get('from', ''), "Maazrat! System mein thori si dikkat aa gayi. Dobara message bhejein.", wa_token)
+                except:
+                    logger.error("💀 Even fallback reply failed!")
 
 if __name__ == "__main__":
     import uvicorn
