@@ -255,7 +255,10 @@ def chat_completion_fallback(messages: list):
                 comp = groq_client.chat.completions.create(model=model_name, messages=messages, temperature=0.4)
                 return comp.choices[0].message.content
             except Exception as e:
-                logger.warning(f"⚠️ Groq model '{model_name}' failed. Trying next...")
+                err_msg = str(e)
+                if hasattr(e, 'response'):
+                    err_msg += f" - {e.response.text}"
+                logger.warning(f"⚠️ Groq model '{model_name}' failed: {err_msg}")
                 continue
                 
         logger.error("❌ All Groq models failed!")
