@@ -219,7 +219,7 @@ OUTPUT ONLY JSON.
   "property_type": "house" | "flat" | "plot" | "warehouse" | null,
   "bhk": integer | null,
   "budget": integer | null,
-  "reply_text": "Professional pure Pakistani Roman Urdu response using emojis ✨"
+  "reply_text": "Professional pure Pakistani Roman Urdu response"
 }
 
 RULES:
@@ -357,6 +357,11 @@ def process_whatsapp_data(data: dict):
                 if (is_new_session or is_stale_session) and is_greeting:
                     msg = "Assalam o Alaikum! 🙏 Qorvx PK Bot mein khush amdeed. Main aapki property ke hawale se kaise madad kar sakta hoon? 👇"
                     send_whatsapp_buttons(tenant_id, from_number, msg, ["Kharidni hai 🏠", "Rent pr leni hai 🏢", "Bechni hai 🤝"], wa_token)
+                    chat_hist.append({"role": "user", "content": msg_body})
+                    chat_hist.append({"role": "assistant", "content": msg})
+                    session["chat_history"] = chat_hist[-10:]
+                    save_chat_history(from_number, tenant_id, "user", msg_body)
+                    save_chat_history(from_number, tenant_id, "assistant", msg)
                     save_user_session(from_number, tenant_id, session)
                     return
 
@@ -373,26 +378,35 @@ def process_whatsapp_data(data: dict):
 
                 # Interactive Fast-Track
                 if btn_id:
+                    ai_reply = ""
                     if "buy" in btn_id or "kharidni" in btn_id:
                         session["purpose"] = "buy"
-                        send_whatsapp_text(tenant_id, from_number, "Zabardast! 🎉 Kis shehar ya area (Location) mein property dekh rahe hain? 📍", wa_token)
+                        ai_reply = "Zabardast! 🎉 Kis shehar ya area (Location) mein property dekh rahe hain? 📍"
                     elif "rent" in btn_id:
                         session["purpose"] = "rent"
-                        send_whatsapp_text(tenant_id, from_number, "Theek hai! 👍 Kis location pe rent ke liye dekhna hai? 📍", wa_token)
+                        ai_reply = "Theek hai! 👍 Kis location pe rent ke liye dekhna hai? 📍"
                     elif "sell" in btn_id or "bechni" in btn_id:
                         session["purpose"] = "sell"
                         session["state"] = "ASKING_SELL_TYPE"
-                        send_whatsapp_text(tenant_id, from_number, "Aap kya bechna chahte hain? 🏡 (Ghar, Plot, Commercial?)", wa_token)
+                        ai_reply = "Aap kya bechna chahte hain? 🏡 (Ghar, Plot, Commercial?)"
                     elif "change" in btn_id:
                         session["search_confirmed"] = False
-                        send_whatsapp_text(tenant_id, from_number, "Kya tabdeel karna chahte hain? 🔄 Location, Budget ya kuch aur?", wa_token)
+                        ai_reply = "Kya tabdeel karna chahte hain? 🔄 Location, Budget ya kuch aur?"
                     elif "confirm" in btn_id:
                         session["search_confirmed"] = True
-                        send_whatsapp_text(tenant_id, from_number, "Property search start kar di gayi hai... 🔍", wa_token)
+                        ai_reply = "Property search start kar di gayi hai... 🔍"
                     elif "visit" in btn_id:
                         session["state"] = "SCHEDULING_VISIT"
                         session["funnel_state"] = "AWAITING_VISIT_INFO"
-                        send_whatsapp_text(tenant_id, from_number, "Visit book karne ke liye apna Pura Naam likh kar bhejein: 📝", wa_token)
+                        ai_reply = "Visit book karne ke liye apna Pura Naam likh kar bhejein: 📝"
+                    
+                    if ai_reply:
+                        send_whatsapp_text(tenant_id, from_number, ai_reply, wa_token)
+                        chat_hist.append({"role": "user", "content": msg_body})
+                        chat_hist.append({"role": "assistant", "content": ai_reply})
+                        session["chat_history"] = chat_hist[-10:]
+                        save_chat_history(from_number, tenant_id, "user", msg_body)
+                        save_chat_history(from_number, tenant_id, "assistant", ai_reply)
                     
                     save_user_session(from_number, tenant_id, session)
                     return
