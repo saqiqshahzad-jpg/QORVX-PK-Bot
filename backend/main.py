@@ -260,19 +260,33 @@ async def receive_webhook(request: Request, bg_tasks: BackgroundTasks):
     return PlainTextResponse(content="OK")
 
 def process_whatsapp_data(data: dict):
-    if not data.get("object") or not data.get("entry"): return
+    logger.info(f"🔔 Webhook data received: object={data.get('object')}, entries={len(data.get('entry', []))}")
+    if not data.get("object") or not data.get("entry"):
+        logger.warning("❌ No 'object' or 'entry' in webhook data — skipping")
+        return
     
     for entry in data["entry"]:
         for change in entry.get("changes", []):
             val = change.get("value", {})
             tenant_id = val.get("metadata", {}).get("phone_number_id")
-            if not tenant_id: continue
+            if not tenant_id:
+                logger.warning("❌ No tenant_id found in metadata — skipping")
+                continue
             
+            logger.info(f"🏢 Tenant ID: {tenant_id}")
             tenant_config = get_tenant_config(tenant_id)
+            logger.info(f"🏢 Tenant config keys: {list(tenant_config.keys()) if tenant_config else 'EMPTY'}")
             wa_token = tenant_config.get("whatsapp_token")
-            if not wa_token: continue
+            if not wa_token:
+                logger.error(f"❌ No whatsapp_token found for tenant {tenant_id} — bot cannot reply!")
+                continue
             
-            for msg in val.get("messages", []):
+            msgs = val.get("messages", [])
+            logger.info(f"📨 Messages count: {len(msgs)}")
+            if not msgs:
+                logger.info("ℹ️ No messages in this webhook (probably a status update)")
+            
+            for msg in msgs:
               try:
                 from_number = msg["from"]
                 msg_id = msg.get("id")
