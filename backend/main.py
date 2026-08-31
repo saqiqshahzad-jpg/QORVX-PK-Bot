@@ -41,6 +41,7 @@ def get_tenant_config(tenant_id: str):
     try:
         url = f"{SUPABASE_URL}/rest/v1/vencode_tenants?phone_number_id=eq.{tenant_id}&select=*"
         res = requests.get(url, headers=get_supabase_headers(), timeout=10)
+        logger.info(f"🔍 Supabase fetch status: {res.status_code} | response: {res.text}")
         if res.status_code == 200 and res.json():
             return res.json()[0]
     except Exception as e:
