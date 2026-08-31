@@ -219,15 +219,17 @@ OUTPUT ONLY JSON.
   "property_type": "house" | "flat" | "plot" | "warehouse" | null,
   "bhk": integer | null,
   "budget": integer | null,
-  "reply_text": "Professional Roman Urdu / English response"
+  "reply_text": "Professional pure Pakistani Roman Urdu response using emojis ✨"
 }
 
 RULES:
-1. Iron Dome: If off-topic (politics, coding), intent="qa" and reply="Maazrat Janab... Mera kaam sirf property kharidne aur bechne tak mehdood hai."
+1. Iron Dome: If off-topic (politics, coding), intent="qa" and reply="Maazrat Janab 🙏... Mera kaam sirf property kharidne aur bechne tak mehdood hai. 🏢"
 2. Contradiction: If user changes param, set intent="confirm_change".
 3. Smart QA: Weave property loc/size into answer.
 4. Marla Trap: Marla/Kanal/Sqft are LAND size. Do NOT put in `bhk`.
 5. NEVER ask for information already provided.
+6. Language: STRICTLY use pure Pakistani Roman Urdu (e.g., "Masla nahi", "Zabardast", "Bohot aala", "Sir/Madam"). DO NOT use Indian terms like "kripya", "dhanyawad", "namaste", "badhiya".
+7. Emojis: ALWAYS include relevant emojis in your `reply_text` to make it engaging! ✨
 """
 
 def chat_completion_fallback(messages: list):
@@ -347,9 +349,14 @@ def process_whatsapp_data(data: dict):
                 session = get_user_session(from_number, tenant_id)
                 chat_hist = session["chat_history"]
                 
-                # Returning user greeting
-                if now - session.get("last_interaction", now) > 7200 and msg_body.lower() in ["hi", "hello", "salam"]:
-                    send_whatsapp_buttons(tenant_id, from_number, "Welcome back! Kya aap apni pichli search continue karna chahte hain?", ["Buy", "Rent", "More Options"], wa_token)
+                # Initial Greeting or Returning User
+                is_new_session = not chat_hist
+                is_stale_session = now - session.get("last_interaction", now) > 7200
+                is_greeting = msg_body.lower() in ["hi", "hello", "salam", "assalam o alaikum", "menu", "start", "hey"]
+
+                if (is_new_session or is_stale_session) and is_greeting:
+                    msg = "Assalam o Alaikum! 🙏 Qorvx PK Bot mein khush amdeed. Main aapki property ke hawale se kaise madad kar sakta hoon? 👇"
+                    send_whatsapp_buttons(tenant_id, from_number, msg, ["Kharidni hai 🏠", "Rent pr leni hai 🏢", "Bechni hai 🤝"], wa_token)
                     save_user_session(from_number, tenant_id, session)
                     return
 
@@ -366,26 +373,26 @@ def process_whatsapp_data(data: dict):
 
                 # Interactive Fast-Track
                 if btn_id:
-                    if "buy" in btn_id:
+                    if "buy" in btn_id or "kharidni" in btn_id:
                         session["purpose"] = "buy"
-                        send_whatsapp_text(tenant_id, from_number, "Zabardast! Kis shehar ya area (Location) mein property dekh rahe hain?", wa_token)
+                        send_whatsapp_text(tenant_id, from_number, "Zabardast! 🎉 Kis shehar ya area (Location) mein property dekh rahe hain? 📍", wa_token)
                     elif "rent" in btn_id:
                         session["purpose"] = "rent"
-                        send_whatsapp_text(tenant_id, from_number, "Theek hai! Kis location pe rent ke liye dekhna hai?", wa_token)
-                    elif "sell" in btn_id:
+                        send_whatsapp_text(tenant_id, from_number, "Theek hai! 👍 Kis location pe rent ke liye dekhna hai? 📍", wa_token)
+                    elif "sell" in btn_id or "bechni" in btn_id:
                         session["purpose"] = "sell"
                         session["state"] = "ASKING_SELL_TYPE"
-                        send_whatsapp_text(tenant_id, from_number, "Aap kya bechna chahte hain? (Ghar, Plot, Commercial?)", wa_token)
+                        send_whatsapp_text(tenant_id, from_number, "Aap kya bechna chahte hain? 🏡 (Ghar, Plot, Commercial?)", wa_token)
                     elif "change" in btn_id:
                         session["search_confirmed"] = False
-                        send_whatsapp_text(tenant_id, from_number, "Kya tabdeel karna chahte hain? Location, Budget ya kuch aur?", wa_token)
+                        send_whatsapp_text(tenant_id, from_number, "Kya tabdeel karna chahte hain? 🔄 Location, Budget ya kuch aur?", wa_token)
                     elif "confirm" in btn_id:
                         session["search_confirmed"] = True
-                        send_whatsapp_text(tenant_id, from_number, "Property search start kar di gayi hai...", wa_token)
+                        send_whatsapp_text(tenant_id, from_number, "Property search start kar di gayi hai... 🔍", wa_token)
                     elif "visit" in btn_id:
                         session["state"] = "SCHEDULING_VISIT"
                         session["funnel_state"] = "AWAITING_VISIT_INFO"
-                        send_whatsapp_text(tenant_id, from_number, "Visit book karne ke liye apna Pura Naam likh kar bhejein:", wa_token)
+                        send_whatsapp_text(tenant_id, from_number, "Visit book karne ke liye apna Pura Naam likh kar bhejein: 📝", wa_token)
                     
                     save_user_session(from_number, tenant_id, session)
                     return
