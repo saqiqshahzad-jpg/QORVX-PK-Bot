@@ -482,7 +482,10 @@ def process_whatsapp_data(data: dict):
                 save_user_session(from_number, tenant_id, session)
                 
                 logger.info(f"📤 Sending reply to {from_number}: {ai_reply[:80]}...")
-                send_whatsapp_text(tenant_id, from_number, ai_reply, wa_token)
+                if session.get("awaiting_confirmation") and not session.get("search_confirmed"):
+                    send_whatsapp_buttons(tenant_id, from_number, ai_reply, ["Confirm", "Change"], wa_token)
+                else:
+                    send_whatsapp_text(tenant_id, from_number, ai_reply, wa_token)
 
               except Exception as fatal_err:
                 logger.error(f"💀 FATAL ERROR processing msg from {msg.get('from', 'unknown')}: {fatal_err}", exc_info=True)
