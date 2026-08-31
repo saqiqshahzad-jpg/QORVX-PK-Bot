@@ -232,17 +232,21 @@ RULES:
 
 def chat_completion_fallback(messages: list):
     try:
-        # Try Gemini (assuming OpenAI compatible endpoint or google genai)
-        res = requests.post(f"https://generativelanguage.googleapis.com/v1beta/openai/chat/completions?key={GEMINI_API_KEY}", json={"model": "gemini-3.6-flash", "messages": messages, "temperature": 0.4}, timeout=15)
-        if res.status_code == 200: return res.json()["choices"][0]["message"]["content"]
-    except: pass
+        # Try Gemini
+        res = requests.post(f"https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", headers={"Authorization": f"Bearer {GEMINI_API_KEY}"}, json={"model": "gemini-1.5-flash", "messages": messages, "temperature": 0.4}, timeout=15)
+        if res.status_code == 200: 
+            return res.json()["choices"][0]["message"]["content"]
+        else:
+            logger.warning(f"⚠️ Gemini failed: {res.status_code} - {res.text}")
+    except Exception as e: 
+        logger.warning(f"⚠️ Gemini exception: {e}")
     
     try:
         if groq_client:
             comp = groq_client.chat.completions.create(model="llama-3.1-70b-versatile", messages=messages, temperature=0.4)
             return comp.choices[0].message.content
-    except Exception as e:
-        logger.error(f"Groq API error: {e}")
+    except Exception as e: 
+        logger.warning(f"⚠️ Groq exception: {e}")
     
     return "Janab, system par is waqt thora load hai... 10 second baad dobara bhejein."
 
