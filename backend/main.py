@@ -233,20 +233,35 @@ RULES:
 def chat_completion_fallback(messages: list):
     try:
         # Try Gemini (assuming OpenAI compatible endpoint or google genai)
-        res = requests.post(f"https://generativelanguage.googleapis.com/v1beta/openai/chat/completions?key={GEMINI_API_KEY}", json={"model": "gemini-3.6-flash", "messages": messages, "temperature": 0.4}, timeout=15)
-        if res.status_code == 200: return res.json()["choices"][0]["message"]["content"]
+        # Using the correct model name: gemini-1.5-flash
+        res = requests.post(
+            f"https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", 
+            headers={"Authorization": f"Bearer {GEMINI_API_KEY}"},
+            json={"model": "gemini-1.5-flash", "messages": messages, "temperature": 0.4}, 
+            timeout=15
+        )
+        if res.status_code == 200: 
+            return res.json()["choices"][0]["message"]["content"]
     except Exception as e: 
         logger.warning(f"Gemini skipped: {e}")
     
-    try:
-        if groq_client:
-            logger.info(f"📤 Sending to Groq: {json.dumps(messages)}")
-            comp = groq_client.chat.completions.create(model="qwen-2.5-32b", messages=messages, temperature=0.4)
-            return comp.choices[0].message.content
-    except Exception as e:
-        logger.error(f"❌ Groq Error: {e}")
-        if hasattr(e, 'response'):
-            logger.error(f"❌ Groq Error Response: {e.response.text}")
+    # Try Groq with a list of free fallback models
+    free_models = [
+        "llama-3.1-70b-versatile",
+        "llama-3.1-8b-instant",
+        "llama3-70b-8192",
+        "mixtral-8x7b-32768",
+        "gemma2-9b-it"
+    ]
+    
+    if groq_client:
+        for model_name in free_models:
+            try:
+                comp = groq_client.chat.completions.create(model=model_name, messages=messages, temperature=0.4)
+                return comp.choices[0].message.content
+            except Exception as e:
+                logger.warning(f"⚠️ Groq model '{model_name}' failed, trying next...")
+                continue
     
     return "Janab, system par is waqt thora load hai... 10 second baad dobara bhejein."
 
