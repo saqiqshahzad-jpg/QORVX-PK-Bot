@@ -250,6 +250,14 @@ class GoogleSheetCRM:
                 if purpose and purpose.lower() not in r_purpose: continue
                 if bhk and str(bhk) not in str(r.get("BHK", "")): continue
                 
+                if budget:
+                    prop_demand = r.get("Demand_PKR", 0)
+                    try:
+                        prop_demand = int(str(prop_demand).replace(",", ""))
+                        if prop_demand > budget * 1.02: continue # Allow max 2% margin
+                    except:
+                        pass
+                
                 # Format for WhatsApp
                 bhk_str = f"{r.get('BHK')} BHK " if r.get('BHK') else ""
                 size_str = f"{r.get('Size')} " if r.get('Size') else ""
@@ -274,7 +282,9 @@ class GoogleSheetCRM:
                     "ID": str(r.get("Property_ID", "")),
                     "Images": images,
                     "Raw_BHK": str(r.get("BHK", "")),
-                    "Raw_Budget": r.get("Demand_PKR", 0)
+                    "Raw_Budget": r.get("Demand_PKR", 0),
+                    "Full_Description": str(r.get("Description", "")),
+                    "Amenities": str(r.get("Amenities", ""))
                 }
                 results.append(formatted_p)
                 if len(results) >= limit: break
@@ -329,7 +339,9 @@ class GoogleSheetCRM:
                     "ID": prop_id,
                     "Images": images,
                     "Raw_BHK": str(r.get("BHK", "")),
-                    "Raw_Budget": r.get("Demand_PKR", 0)
+                    "Raw_Budget": r.get("Demand_PKR", 0),
+                    "Full_Description": str(r.get("Description", "")),
+                    "Amenities": str(r.get("Amenities", ""))
                 }
             return None
         except Exception as e:
@@ -404,6 +416,7 @@ def execute_property_search(session, tenant_config, wa_token, from_number, tenan
             purpose=session.get("purpose"),
             bhk=session.get("bhk"),
             budget=session.get("budget"),
+            limit=10,
             exclude_ids=exclude_ids
         )
     elif session.get("recommended_property"):
@@ -411,27 +424,31 @@ def execute_property_search(session, tenant_config, wa_token, from_number, tenan
         session["recommended_property"] = None
     
     if properties:
-        for idx, p in enumerate(properties, 1):
-            title = p.get('Title', f"Property {idx}")
-            price = p.get('Price', 'N/A')
-            loc = p.get('Location', session.get('location', 'N/A'))
-            desc = p.get('Description', '')
-            prop_id = p.get('ID', f"ID-{idx}")
-            images = p.get('Images', [])
+        extra_count = len(properties) - 1
+        p = properties[0]
+        
+        title = p.get('Title', f"Property 1")
+        price = p.get('Price', 'N/A')
+        loc = p.get('Location', session.get('location', 'N/A'))
+        desc = p.get('Description', '')
+        prop_id = p.get('ID', f"ID-1")
+        images = p.get('Images', [])
+        
+        caption = f"*{title}*\n📍 {loc}\n💰 {price}\n📝 {desc}\n🆔 (ID: {prop_id})"
+        if extra_count > 0:
+            caption += f"\n\n*(💡 Aapki requirements ke mutabiq {extra_count} mazeed options available hain)*"
+        
+        # Send TEXT with details first
+        msg_id = send_whatsapp_text(tenant_id, from_number, caption, wa_token)
+        
+        # Send ALL IMAGES sequentially
+        for img_url in images:
+            send_whatsapp_image(tenant_id, from_number, img_url, "", wa_token)
+            time.sleep(0.5)
             
-            caption = f"*{title}*\n📍 {loc}\n💰 {price}\n📝 {desc}\n🆔 (ID: {prop_id})"
-            
-            # Send TEXT with details first
-            msg_id = send_whatsapp_text(tenant_id, from_number, caption, wa_token)
-            
-            # Send ALL IMAGES sequentially
-            for img_url in images:
-                send_whatsapp_image(tenant_id, from_number, img_url, "", wa_token)
-                time.sleep(0.5)
-                
-            if msg_id:
-                p["message_id"] = msg_id
-                sent_props.append(p)
+        if msg_id:
+            p["message_id"] = msg_id
+            sent_props.append(p)
                 
         session["sent_properties"] = sent_props
         if len(sent_props) == 1:
@@ -825,36 +842,7 @@ def process_whatsapp_data(data: dict):
                     save_user_session(from_number, tenant_id, session)
                     return
 
-                # Verbal Confirmation Interceptor
-                if session.get("awaiting_confirmation"):
-                    if re.search(r'\b(yes|haan|theek|done)\b', msg_body.lower()):
-                        session["search_confirmed"] = True
-                        if session.get("purpose") == "sell":
-                            logger.info(f"📝 Saving Seller Lead for session: {session}")
-                            save_seller_lead(session, tenant_config, from_number)
-                            name = session.get("user_name") or "Janab"
-                            success_msg = f"✨ *{name}*, aapki property ki details hamari premium listing mein aage bhej di gayi hain. Humari expert team iska deeply tajziya karegi aur jald hi behtareen kharidar (buyer) ke sath aapse raabta karegi. Shukriya! 🤝"
-                            send_whatsapp_text(tenant_id, from_number, success_msg, wa_token)
-                        else:
-                            logger.info(f"🔍 Starting property search for session: {session}")
-                            execute_property_search(session, tenant_config, wa_token, from_number, tenant_id, chat_hist)
-                        save_user_session(from_number, tenant_id, session)
-                        return
-                    elif re.search(r'\b(change|badal|galat|no|nahi)\b', msg_body.lower()):
-                        session["awaiting_confirmation"] = False
-                        send_whatsapp_text(tenant_id, from_number, "Bilkul! Kya tabdeel karna chahte hain? 🔄 (Jaise: 'Budget 8 Crore' ya 'Location Bahria Town')", wa_token)
-                        save_user_session(from_number, tenant_id, session)
-                        return
-                    else:
-                        session["awaiting_confirmation"] = False
-
-                # Intent Shift Detection (House -> Plot)
-                if session["property_type"] == "house" and any(w in msg_body.lower() for w in ["plot", "zameen"]):
-                    session["archived_intents"].append({"type": "house", "budget": session.get("budget"), "loc": session.get("location")})
-                    session.update({"property_type": "plot", "budget": None, "bhk": None, "location": None, "state": None, "active_property": None})
-                    send_whatsapp_text(tenant_id, from_number, "Note kar liya, aap ab plot dekhna chahte hain. Kya aap kharidna chahte hain ya bechna?", wa_token)
-                    save_user_session(from_number, tenant_id, session)
-                    return
+                # Intent shifts and confirmations are now handled purely by LLM and Button IDs
 
                 # NLP Extraction
                 last_ai = chat_hist[-1]["content"] if chat_hist else ""
@@ -899,8 +887,19 @@ def process_whatsapp_data(data: dict):
                         s_idx, e_idx = llm_res.find("{"), llm_res.rfind("}") + 1
                         parsed = json.loads(llm_res[s_idx:e_idx])
                         
+                        old_ptype = session.get("property_type")
                         for k in ["location", "purpose", "property_type", "bhk", "budget", "size", "user_name", "funnel_state"]:
-                            if parsed.get(k): session[k] = parsed[k]
+                            if k in parsed and parsed[k] is not None: 
+                                session[k] = parsed[k]
+                                
+                        # Clean up if property type changed
+                        if old_ptype and old_ptype != session.get("property_type"):
+                            if session.get("property_type") in ["plot", "warehouse", "zameen"]:
+                                session["bhk"] = None
+                            else:
+                                session["size"] = None
+                            session["search_confirmed"] = False
+                            session["awaiting_confirmation"] = False
                             
                         is_ready = all(session.get(k) for k in ["purpose", "location", "budget", "property_type"])
                         ptype = session.get("property_type", "").lower()
@@ -910,9 +909,20 @@ def process_whatsapp_data(data: dict):
                             elif ptype in ["plot", "warehouse", "zameen"] and not session.get("size"):
                                 is_ready = False
                             
-                        if parsed.get("intent") == "qa":
+                        if parsed.get("intent") == "execute_search":
+                            session["search_confirmed"] = True
+                            if session.get("purpose") == "sell":
+                                save_seller_lead(session, tenant_config, from_number)
+                                name = session.get("user_name") or "Janab"
+                                ai_reply = f"✨ *{name}*, aapki property ki details hamari premium listing mein aage bhej di gayi hain. Humari expert team iska deeply tajziya karegi aur jald hi behtareen kharidar (buyer) ke sath aapse raabta karegi. Shukriya! 🤝"
+                            else:
+                                logger.info(f"🔍 Starting property search for session: {session}")
+                                execute_property_search(session, tenant_config, wa_token, from_number, tenant_id, chat_hist)
+                                ai_reply = ""
+                            session["awaiting_confirmation"] = False
+                        elif parsed.get("intent") == "qa":
                             ai_reply = parsed.get("reply_text", llm_res)
-                        elif parsed.get("intent") == "execute_search" or (is_ready and parsed.get("intent") != "qa"):
+                        elif is_ready and not session.get("awaiting_confirmation"):
                             session["awaiting_confirmation"] = True
                             ai_reply = format_search_confirmation(session)
                         else:
