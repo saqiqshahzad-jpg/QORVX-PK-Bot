@@ -306,10 +306,18 @@ def parse_south_asian_budget(text: str):
     if unit == 'm': return int(val * 1000000)
     return int(val)
 
-def extract_bhk(text: str, prop_type: str):
+def extract_bhk(text: str, prop_type: str, last_ai: str):
     if prop_type in ["plot", "warehouse", "zameen"]: return None
     match = re.search(r'(\d+)\s*(bhk|bed|bedroom|br|beds)', text.lower())
-    return int(match.group(1)) if match else None
+    if match: return int(match.group(1))
+    
+    if "bedroom" in last_ai.lower() or "bhk" in last_ai.lower():
+        words = text.split()
+        if len(words) <= 3:
+            for w in words:
+                if w.isdigit() and 1 <= int(w) <= 15:
+                    return int(w)
+    return None
 
 def extract_location(text: str, last_ai: str):
     PK_LOCS = ["dha", "bahria", "clifton", "gulberg", "johar", "blue area", "f-11", "f-10"]
@@ -340,12 +348,12 @@ OUTPUT ONLY JSON.
 
 RULES:
 1. Iron Dome: If off-topic (politics, coding), intent="qa" and reply="Maazrat Janab 🙏... Mera kaam sirf property kharidne aur bechne tak mehdood hai. 🏢"
-2. Contradiction: If user changes param, set intent="confirm_change".
-3. Smart QA: Weave property loc/size into answer.
-4. Marla Trap: Marla/Kanal/Sqft are LAND size. Do NOT put in `bhk`.
-5. NEVER ask for information already provided.
-6. Language: STRICTLY use pure Pakistani Roman Urdu (e.g., "Masla nahi", "Zabardast", "Bohot aala", "Sir/Madam"). DO NOT use Indian terms like "kripya", "dhanyawad", "namaste", "badhiya".
-7. Emojis: ALWAYS include relevant emojis in your `reply_text` to make it engaging! ✨
+2. Property Types: Map "ghar", "bangla", "banglow", "portion", "kothi" to "house". Map "flat", "apartment" to "flat". Map "plot", "zameen", "land" to "plot".
+3. Mandatory Fields: Ask for missing fields ONE by ONE nicely. 
+4. Bedrooms Rule: If property_type is "house" or "flat", you MUST ask for bedrooms (bhk) if missing! For "plot"/"warehouse", DO NOT ask.
+5. Contradiction: If user changes param, set intent="confirm_change".
+6. Language: STRICTLY use pure Pakistani Roman Urdu (e.g., "Zabardast", "Bohot aala"). DO NOT use Indian terms. NEVER use weird translations like "Crude" for Crore. Just ask "Aapka budget kitna hai?" naturally.
+7. Marla/Kanal are sizes, NOT bhk. Emojis: ALWAYS include relevant emojis! ✨
 """
 
 def chat_completion_fallback(messages: list):
@@ -566,13 +574,14 @@ def process_whatsapp_data(data: dict):
                     return
 
                 # NLP Extraction
-                bhk = extract_bhk(msg_body, session.get("property_type"))
+                last_ai = chat_hist[-1]["content"] if chat_hist else ""
+                
+                bhk = extract_bhk(msg_body, session.get("property_type"), last_ai)
                 if bhk: session["bhk"] = bhk
                 
                 budget = parse_south_asian_budget(msg_body)
                 if budget: session["budget"] = budget
                 
-                last_ai = chat_hist[-1]["content"] if chat_hist else ""
                 loc = extract_location(msg_body, last_ai)
                 if loc: session["location"] = loc
 
@@ -596,9 +605,14 @@ def process_whatsapp_data(data: dict):
                         for k in ["location", "purpose", "property_type", "bhk", "budget"]:
                             if parsed.get(k): session[k] = parsed[k]
                             
+                        is_ready = all(session.get(k) for k in ["purpose", "location", "budget", "property_type"])
+                        ptype = session.get("property_type", "").lower()
+                        if is_ready and ptype not in ["plot", "warehouse", "zameen"] and not session.get("bhk"):
+                            is_ready = False
+                            
                         if parsed.get("intent") == "qa":
                             ai_reply = parsed.get("reply_text", llm_res)
-                        elif parsed.get("intent") == "execute_search" or (all(session.get(k) for k in ["purpose", "location", "budget", "property_type"]) and parsed.get("intent") != "qa"):
+                        elif parsed.get("intent") == "execute_search" or (is_ready and parsed.get("intent") != "qa"):
                             session["awaiting_confirmation"] = True
                             ai_reply = format_search_confirmation(session)
                         else:
