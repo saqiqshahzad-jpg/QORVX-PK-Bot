@@ -269,9 +269,16 @@ class GoogleSheetCRM:
                 prop_type_str = str(r.get('Property_Type', 'Property')).title()
                 
                 title = f"{bhk_str}{size_str}{prop_type_str} in {r.get('Society_Area', '')}"
-                loc = f"{r.get('Society_Area', '')}, {r.get('City', '')}"
+                phase = str(r.get('Phase_Block', '')).strip()
+                if phase and phase != '-':
+                    loc = f"{phase}, {r.get('Society_Area', '')}, {r.get('City', '')}"
+                else:
+                    loc = f"{r.get('Society_Area', '')}, {r.get('City', '')}"
                 price = f"{r.get('Demand_PKR', 'N/A')}"
-                desc = f"Phase: {r.get('Phase_Block', '-')} | Condition: {r.get('Possession', '-')}"
+                
+                poss = str(r.get('Possession', '-')).strip()
+                poss_text = "🔥 Brand New, Ready" if poss.lower() == "ready" else f"💎 Premium, {poss}"
+                desc = f"Condition: {poss_text}"
                 
                 images = []
                 for i in range(1, 10):
@@ -326,9 +333,16 @@ class GoogleSheetCRM:
                 prop_type_str = str(r.get('Property_Type', 'Property')).title()
                 
                 title = f"{bhk_str}{size_str}{prop_type_str} in {r.get('Society_Area', '')}"
-                loc = f"{r.get('Society_Area', '')}, {r.get('City', '')}"
+                phase = str(r.get('Phase_Block', '')).strip()
+                if phase and phase != '-':
+                    loc = f"{phase}, {r.get('Society_Area', '')}, {r.get('City', '')}"
+                else:
+                    loc = f"{r.get('Society_Area', '')}, {r.get('City', '')}"
                 price = f"{r.get('Demand_PKR', 'N/A')}"
-                desc = f"Phase: {r.get('Phase_Block', '-')} | Condition: {r.get('Possession', '-')}"
+                
+                poss = str(r.get('Possession', '-')).strip()
+                poss_text = "🔥 Brand New, Ready" if poss.lower() == "ready" else f"💎 Premium, {poss}"
+                desc = f"Condition: {poss_text}"
                 
                 images = []
                 for i in range(1, 10):
