@@ -163,8 +163,12 @@ class GoogleSheetCRM:
         self.sheet_id = sheet_id
         try:
             self.client = gspread.service_account()
-            self.doc = self.client.open_by_key(sheet_id)
-        except:
+            try:
+                self.doc = self.client.open_by_key(sheet_id)
+            except Exception:
+                self.doc = self.client.open(sheet_id)
+        except Exception as e:
+            logger.error(f"GoogleSheetCRM init failed for '{sheet_id}': {e}")
             self.client = None
 
     def append_lead(self, phone: str, name: str, email: str, prop_id: str):
@@ -177,7 +181,9 @@ class GoogleSheetCRM:
             return False
 
     def append_seller_lead(self, phone: str, name: str, property_type: str, location: str, size: str, bedrooms: str, demand: str):
-        if not self.client: return False
+        if not self.client:
+            logger.error("Seller Lead save failed: Google Sheets client not initialized.")
+            return False
         try:
             sheet = self.doc.worksheet("Seller_Leads")
             sheet.append_row([time.strftime("%d-%m-%Y %H:%M:%S"), phone, name, property_type, location, size, bedrooms, demand])
