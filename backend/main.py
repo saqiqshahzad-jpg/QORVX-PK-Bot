@@ -227,20 +227,50 @@ class GoogleSheetCRM:
         if not self.client:
             return self._mock_properties(location, property_type, bhk, budget)
         try:
-            sheet = self.doc.worksheet("Properties")
+            # The worksheet is the same as the sheet name
+            try:
+                sheet = self.doc.worksheet(self.sheet_id)
+            except:
+                sheet = self.doc.sheet1
+                
             records = sheet.get_all_records()
             results = []
             for r in records:
-                r_loc = str(r.get("Location", "")).lower()
-                r_type = str(r.get("Type", "")).lower()
-                r_purpose = str(r.get("Purpose", "")).lower()
-                if location and location.lower() not in r_loc: continue
+                r_city = str(r.get("City", "")).lower()
+                r_society = str(r.get("Society_Area", "")).lower()
+                r_type = str(r.get("Property_Type", "")).lower()
+                r_purpose = str(r.get("Listing_Type", "")).lower()
+                
+                # Basic matching
+                if location and location.lower() not in r_city and location.lower() not in r_society: continue
                 if property_type and property_type.lower() not in r_type: continue
                 if purpose and purpose.lower() not in r_purpose: continue
-                results.append(r)
+                if bhk and str(bhk) not in str(r.get("BHK", "")): continue
+                
+                # Format for WhatsApp
+                bhk_str = f"{r.get('BHK')} BHK " if r.get('BHK') else ""
+                size_str = f"{r.get('Size')} " if r.get('Size') else ""
+                prop_type_str = str(r.get('Property_Type', 'Property')).title()
+                
+                title = f"{bhk_str}{size_str}{prop_type_str} in {r.get('Society_Area', '')}"
+                loc = f"{r.get('Society_Area', '')}, {r.get('City', '')}"
+                price = f"Rs {r.get('Demand_PKR', 'N/A')}"
+                desc = f"Phase: {r.get('Phase_Block', '-')} | Possession: {r.get('Possession', '-')}"
+                
+                formatted_p = {
+                    "Title": title,
+                    "Location": loc,
+                    "Price": price,
+                    "Description": desc,
+                    "ID": str(r.get("Property_ID", "")),
+                    "Image": str(r.get("Main_Image", ""))
+                }
+                results.append(formatted_p)
                 if len(results) >= limit: break
+                
             return results if results else self._mock_properties(location, property_type, bhk, budget)
-        except:
+        except Exception as e:
+            logger.error(f"search_properties error: {e}", exc_info=True)
             return self._mock_properties(location, property_type, bhk, budget)
 
     def _mock_properties(self, location, property_type, bhk, budget):
