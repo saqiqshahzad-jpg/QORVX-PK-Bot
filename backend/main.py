@@ -961,18 +961,21 @@ def process_whatsapp_data(data: dict):
                         logger.warning(f"⚠️ JSON parse failed: {parse_err}")
                 
                 chat_hist.append({"role": "user", "content": msg_body})
-                chat_hist.append({"role": "assistant", "content": ai_reply})
+                if ai_reply:
+                    chat_hist.append({"role": "assistant", "content": ai_reply})
                 session["chat_history"] = chat_hist[-50:]
                 
                 save_chat_history(from_number, tenant_id, "user", msg_body)
-                save_chat_history(from_number, tenant_id, "assistant", ai_reply)
+                if ai_reply:
+                    save_chat_history(from_number, tenant_id, "assistant", ai_reply)
                 save_user_session(from_number, tenant_id, session)
                 
                 logger.info(f"📤 Sending reply to {from_number}: {ai_reply[:80]}...")
-                if session.get("awaiting_confirmation") and not session.get("search_confirmed"):
-                    send_whatsapp_buttons(tenant_id, from_number, ai_reply, ["Confirm", "Change"], wa_token)
-                else:
-                    send_whatsapp_text(tenant_id, from_number, ai_reply, wa_token)
+                if ai_reply:
+                    if session.get("awaiting_confirmation") and not session.get("search_confirmed"):
+                        send_whatsapp_buttons(tenant_id, from_number, ai_reply, ["Confirm", "Change"], wa_token)
+                    else:
+                        send_whatsapp_text(tenant_id, from_number, ai_reply, wa_token)
 
               except Exception as fatal_err:
                 logger.error(f"💀 FATAL ERROR processing msg from {msg.get('from', 'unknown')}: {fatal_err}", exc_info=True)
