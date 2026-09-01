@@ -53,7 +53,7 @@ def get_user_session(phone: str, tenant_id: str):
         "purpose": None, "property_type": None, "bhk": None, "size": None, "location": None, 
         "budget": None, "user_name": None, "state": None, "funnel_state": None, 
         "awaiting_confirmation": False, "search_confirmed": False, "chat_history": [], 
-        "active_property": None, "archived_intents": [], "last_interaction": time.time()
+        "active_property": None, "sent_properties": [], "archived_intents": [], "last_interaction": time.time()
     }
     try:
         url = f"{SUPABASE_URL}/rest/v1/user_sessions?phone_number=eq.{phone}&tenant_id=eq.{tenant_id}&select=*"
@@ -92,9 +92,11 @@ def send_whatsapp_text(tenant_id: str, phone: str, text: str, token: str):
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     payload = {"messaging_product": "whatsapp", "to": phone, "type": "text", "text": {"body": text}}
     try:
-        requests.post(url, headers=headers, json=payload, timeout=10)
+        res = requests.post(url, headers=headers, json=payload, timeout=10)
+        return res.json().get("messages", [{}])[0].get("id")
     except Exception as e:
         logger.error(f"WA Text Send Failed: {e}")
+        return None
 
 def send_whatsapp_image(tenant_id: str, phone: str, image_url: str, caption: str, token: str):
     url = f"https://graph.facebook.com/{WHATSAPP_API_VERSION}/{tenant_id}/messages"
@@ -109,9 +111,11 @@ def send_whatsapp_image(tenant_id: str, phone: str, image_url: str, caption: str
         }
     }
     try:
-        requests.post(url, headers=headers, json=payload, timeout=10)
+        res = requests.post(url, headers=headers, json=payload, timeout=10)
+        return res.json().get("messages", [{}])[0].get("id")
     except Exception as e:
         logger.error(f"WA Image Send Failed: {e}")
+        return None
 
 def send_whatsapp_buttons(tenant_id: str, phone: str, text: str, buttons: list, token: str):
     url = f"https://graph.facebook.com/{WHATSAPP_API_VERSION}/{tenant_id}/messages"
@@ -301,6 +305,7 @@ def execute_property_search(session, tenant_config, wa_token, from_number, tenan
     )
     
     if properties:
+        sent_list = []
         for idx, p in enumerate(properties, 1):
             title = p.get('Title', f"Property {idx}")
             price = p.get('Price', 'N/A')
@@ -311,16 +316,27 @@ def execute_property_search(session, tenant_config, wa_token, from_number, tenan
             
             caption = f"*{title}*\n📍 {loc}\n💰 {price}\n📝 {desc}\n🆔 (ID: {prop_id})"
             
+            msg_id = None
             if image_url:
-                send_whatsapp_image(tenant_id, from_number, image_url, caption, wa_token)
+                msg_id = send_whatsapp_image(tenant_id, from_number, image_url, caption, wa_token)
             else:
-                send_whatsapp_text(tenant_id, from_number, caption, wa_token)
+                msg_id = send_whatsapp_text(tenant_id, from_number, caption, wa_token)
+                
+            if msg_id:
+                p["message_id"] = msg_id
+                sent_list.append(p)
+                
+        session["sent_properties"] = sent_list
+        if len(sent_list) == 1:
+            session["active_property"] = sent_list[0].get("ID")
+        else:
+            session["active_property"] = None
         
         after_msg = "Inmein se koi pasand aaya ya mazeed options dekhne hain? 👇"
         buttons = ["Sasta option 📉", "Koi aur option 🔄", "Visit karna 📅"]
         send_whatsapp_buttons(tenant_id, from_number, after_msg, buttons, wa_token)
         
-        chat_hist.append({"role": "assistant", "content": f"Sent properties and options."})
+        chat_hist.append({"role": "assistant", "content": f"Sent {len(sent_list)} properties."})
     else:
         fail_msg = "Filhal is criteria ke mutabiq koi exact match nahi mila, lekin humari team is par kaam kar rahi hai aur jald aapko update karegi! ⏳"
         send_whatsapp_text(tenant_id, from_number, fail_msg, wa_token)
@@ -383,16 +399,20 @@ OUTPUT ONLY JSON.
   "size": "string | null",
   "budget": integer | null,
   "user_name": "string | null",
+  "funnel_state": "AWAITING_VISIT_INFO" | null,
   "reply_text": "Professional pure Pakistani Roman Urdu response"
 }
 
 RULES:
-1. Iron Dome: If off-topic (politics, coding), intent="qa" and reply="Maazrat Janab 🙏... Mera kaam sirf property kharidne aur bechne tak mehdood hai. 🏢"
+1. Iron Dome: If off-topic, intent="qa" and reply politely.
 2. Property Types: Map "ghar", "bangla", "portion" to "house". Map "flat" to "flat". Map "plot", "zameen" to "plot".
 3. Fields for BUY/RENT: Need purpose, location, budget, property_type. Ask ONE by ONE.
 4. Fields for SELL: Need purpose, location, property_type, budget (Demand). When asking for Demand, politely ask for their Name too ("Apni demand aur naam bata dein"). If they only provide Demand and ignore name, DO NOT ask for name again.
 5. Size/Bedrooms Rule: If "house" or "flat", you MUST ask for bedrooms (bhk). If "plot", "warehouse", or "zameen", you MUST ask for size (e.g., Marla, Kanal) and DO NOT ask for bedrooms.
-6. Language: STRICTLY pure Pakistani Roman Urdu. NEVER use "Crude". Emojis: ALWAYS use relevant emojis! ✨
+6. Q&A and Context: If `ACTIVE PROPERTY DETAILS` is provided, answer questions based ONLY on it. Append a footer note: "(Yeh maaloomat property ID [X] ki hai. Kisi aur ke liye tasveer par reply karein ya ID ke aakhri 2 digits likhein)".
+7. Disambiguation: If multiple properties were sent but no active property is selected, ask the user to clarify by replying to an image or typing the last 2 digits of the ID.
+8. Unknown Info / Visit Book: If user asks a property detail that isn't in the provided data, say "Yeh maaloomat abhi mere paas nahi... agent visit ke doran batayega. Kya aap visit karna chahte hain?". If user agrees to visit, set `"funnel_state": "AWAITING_VISIT_INFO"`.
+9. Language: STRICTLY pure Pakistani Roman Urdu. Emojis: ALWAYS use relevant emojis! ✨
 """
 
 def chat_completion_fallback(messages: list):
@@ -488,6 +508,7 @@ def process_whatsapp_data(data: dict):
                 
                 msg_body, btn_id = "", ""
                 msg_type = msg.get("type")
+                context_msg_id = msg.get("context", {}).get("id")
                 
                 if msg_type == "text":
                     msg_body = msg["text"]["body"].strip()
@@ -510,6 +531,25 @@ def process_whatsapp_data(data: dict):
                 logger.info(f"💬 Processing: '{msg_body}' from {from_number}")
                 
                 session = get_user_session(from_number, tenant_id)
+                
+                # Contextual Reply / Disambiguation
+                sent_props = session.get("sent_properties", [])
+                if context_msg_id and sent_props:
+                    for sp in sent_props:
+                        if sp.get("message_id") == context_msg_id:
+                            session["active_property"] = sp.get("ID")
+                            break
+                            
+                # If no context match, check for 2-digit ID match in text
+                if sent_props and session.get("active_property") is None:
+                    matches = re.findall(r'\b\d{2}\b', msg_body)
+                    if matches:
+                        for m in matches:
+                            for sp in sent_props:
+                                pid = str(sp.get("ID", ""))
+                                if pid.endswith(m):
+                                    session["active_property"] = pid
+                                    break
                 chat_hist = session["chat_history"]
                 
                 # Initial Greeting or Returning User
@@ -637,9 +677,23 @@ def process_whatsapp_data(data: dict):
                 loc = extract_location(msg_body, last_ai)
                 if loc: session["location"] = loc
 
+                # Inject Active Property Data
+                active_prop_data = None
+                if session.get("active_property") and session.get("sent_properties"):
+                    for p in session["sent_properties"]:
+                        if str(p.get("ID")) == str(session["active_property"]):
+                            active_prop_data = p
+                            break
+
+                sys_add = f"\n\nCURRENT SESSION STATE: {json.dumps(session)}"
+                if active_prop_data:
+                    sys_add += f"\n\nACTIVE PROPERTY DETAILS (Answer based on this): {json.dumps(active_prop_data)}"
+                elif len(session.get("sent_properties", [])) > 1:
+                    sys_add += f"\n\nNOTE: You sent multiple properties but user hasn't specified which one. Ask them to clarify by replying to an image or sending the last 2 digits of the ID."
+
                 # LLM State
                 logger.info(f"🤖 Calling LLM for {from_number}...")
-                sys_prompt = PK_MASTER_PROMPT + f"\n\nCURRENT SESSION STATE: {json.dumps(session)}"
+                sys_prompt = PK_MASTER_PROMPT + sys_add
                 messages = [{"role": "system", "content": sys_prompt}]
                 messages.extend(chat_hist[-40:])
                 messages.append({"role": "user", "content": msg_body})
@@ -654,7 +708,7 @@ def process_whatsapp_data(data: dict):
                         s_idx, e_idx = llm_res.find("{"), llm_res.rfind("}") + 1
                         parsed = json.loads(llm_res[s_idx:e_idx])
                         
-                        for k in ["location", "purpose", "property_type", "bhk", "budget", "size", "user_name"]:
+                        for k in ["location", "purpose", "property_type", "bhk", "budget", "size", "user_name", "funnel_state"]:
                             if parsed.get(k): session[k] = parsed[k]
                             
                         is_ready = all(session.get(k) for k in ["purpose", "location", "budget", "property_type"])
