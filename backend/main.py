@@ -270,8 +270,8 @@ class GoogleSheetCRM:
                 
                 title = f"{bhk_str}{size_str}{prop_type_str} in {r.get('Society_Area', '')}"
                 loc = f"{r.get('Society_Area', '')}, {r.get('City', '')}"
-                price = f"Rs {r.get('Demand_PKR', 'N/A')}"
-                desc = f"Phase: {r.get('Phase_Block', '-')} | Possession: {r.get('Possession', '-')}"
+                price = f"{r.get('Demand_PKR', 'N/A')}"
+                desc = f"Phase: {r.get('Phase_Block', '-')} | Condition: {r.get('Possession', '-')}"
                 
                 images = []
                 for i in range(1, 10):
@@ -327,8 +327,8 @@ class GoogleSheetCRM:
                 
                 title = f"{bhk_str}{size_str}{prop_type_str} in {r.get('Society_Area', '')}"
                 loc = f"{r.get('Society_Area', '')}, {r.get('City', '')}"
-                price = f"Rs {r.get('Demand_PKR', 'N/A')}"
-                desc = f"Phase: {r.get('Phase_Block', '-')} | Possession: {r.get('Possession', '-')}"
+                price = f"{r.get('Demand_PKR', 'N/A')}"
+                desc = f"Phase: {r.get('Phase_Block', '-')} | Condition: {r.get('Possession', '-')}"
                 
                 images = []
                 for i in range(1, 10):
@@ -438,16 +438,21 @@ def execute_property_search(session, tenant_config, wa_token, from_number, tenan
         desc = p.get('Description', '')
         prop_id = p.get('ID', f"ID-1")
         images = p.get('Images', [])
+        bhk_val = p.get('Raw_BHK', '')
         
-        caption = f"*{title}*\n📍 {loc}\n💰 {price}\n📝 {desc}\n🆔 (ID: {prop_id})"
+        caption = f"*{title}*\n📍 Loc: {loc}\n💰 Demand: {price}\n"
+        if bhk_val and str(bhk_val).strip() != "" and str(bhk_val).strip() != "None":
+            caption += f"🛏️ Bedrooms: {bhk_val}\n"
+        caption += f"📝 {desc}\n🆔 (ID: {prop_id})"
+        
         if extra_count > 0:
             caption += f"\n\n*(💡 Aapki requirements ke mutabiq {extra_count} mazeed options available hain)*"
         
         # Send TEXT with details first
         msg_id = send_whatsapp_text(tenant_id, from_number, caption, wa_token)
         
-        # Send ALL IMAGES sequentially
-        for img_url in images:
+        # Send IMAGES sequentially (Limit to 3 to prevent massive delays)
+        for img_url in images[:3]:
             send_whatsapp_image(tenant_id, from_number, img_url, "", wa_token)
             time.sleep(0.5)
             
