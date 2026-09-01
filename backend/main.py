@@ -96,6 +96,23 @@ def send_whatsapp_text(tenant_id: str, phone: str, text: str, token: str):
     except Exception as e:
         logger.error(f"WA Text Send Failed: {e}")
 
+def send_whatsapp_image(tenant_id: str, phone: str, image_url: str, caption: str, token: str):
+    url = f"https://graph.facebook.com/{WHATSAPP_API_VERSION}/{tenant_id}/messages"
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": phone,
+        "type": "image",
+        "image": {
+            "link": image_url,
+            "caption": caption
+        }
+    }
+    try:
+        requests.post(url, headers=headers, json=payload, timeout=10)
+    except Exception as e:
+        logger.error(f"WA Image Send Failed: {e}")
+
 def send_whatsapp_buttons(tenant_id: str, phone: str, text: str, buttons: list, token: str):
     url = f"https://graph.facebook.com/{WHATSAPP_API_VERSION}/{tenant_id}/messages"
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
@@ -199,9 +216,78 @@ class GoogleSheetCRM:
         rooms = f"{bhk} BHK " if bhk else ""
         price = f"{budget/10000000:g} Crore" if budget else "Contact for Price"
         return [
-            {"Title": f"Premium {rooms}{ptype}", "Location": loc, "Price": price, "Description": "Beautifully designed with modern amenities.", "ID": "PR-101"},
-            {"Title": f"Luxury {rooms}{ptype}", "Location": loc, "Price": price, "Description": "Spacious and well-ventilated with great view.", "ID": "PR-102"}
+            {"Title": f"Premium {rooms}{ptype}", "Location": loc, "Price": price, "Description": "Beautifully designed with modern amenities.", "ID": "PR-101", "Image": "https://images.unsplash.com/photo-1600596542815-ffad4c1539a9?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80"},
+            {"Title": f"Luxury {rooms}{ptype}", "Location": loc, "Price": price, "Description": "Spacious and well-ventilated with great view.", "ID": "PR-102", "Image": "https://images.unsplash.com/photo-1512917774080-9991f1c4c750?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80"}
         ]
+
+def format_search_confirmation(session):
+    maqsad_map = {"buy": "Kharidna", "sell": "Bechna", "rent": "Rent"}
+    maqsad = maqsad_map.get(session.get("purpose", ""), str(session.get("purpose", "-")).title())
+    
+    loc = str(session.get("location", "-")).title()
+    ptype = str(session.get("property_type", "-")).title()
+    
+    bhk = "-"
+    if ptype.lower() not in ["plot", "warehouse", "zameen", "-"]:
+        bhk = f"{session.get('bhk')} Bedrooms" if session.get("bhk") else "-"
+        
+    budget = "-"
+    if session.get("budget"):
+        b_val = session["budget"]
+        if b_val >= 10000000:
+            budget = f"{b_val / 10000000:g} Crore"
+        elif b_val >= 100000:
+            budget = f"{b_val / 100000:g} Lakh"
+        else:
+            budget = str(b_val)
+            
+    text = f"Behtareen! Aapki search details yeh hain:\n\n"
+    text += f"🎯 Maqsad: {maqsad}\n"
+    text += f"📍 Location: {loc}\n"
+    text += f"🏢 Property Type: {ptype}\n"
+    text += f"🛏️ Bedrooms: {bhk}\n"
+    text += f"💰 Budget: {budget}\n\n"
+    text += "Kya aap in details ko confirm karte hain?"
+    return text
+
+def execute_property_search(session, tenant_config, wa_token, from_number, tenant_id, chat_hist):
+    send_whatsapp_text(tenant_id, from_number, "Property search start kar di gayi hai... 🔍", wa_token)
+    
+    crm = GoogleSheetCRM(tenant_config.get("property_sheet_name", ""))
+    properties = crm.search_properties(
+        location=session.get("location"),
+        property_type=session.get("property_type"),
+        purpose=session.get("purpose"),
+        bhk=session.get("bhk"),
+        budget=session.get("budget")
+    )
+    
+    if properties:
+        for idx, p in enumerate(properties, 1):
+            title = p.get('Title', f"Property {idx}")
+            price = p.get('Price', 'N/A')
+            loc = p.get('Location', session.get('location', 'N/A'))
+            desc = p.get('Description', '')
+            prop_id = p.get('ID', f"ID-{idx}")
+            image_url = p.get('Image', '')
+            
+            caption = f"*{title}*\n📍 {loc}\n💰 {price}\n📝 {desc}\n🆔 (ID: {prop_id})"
+            
+            if image_url:
+                send_whatsapp_image(tenant_id, from_number, image_url, caption, wa_token)
+            else:
+                send_whatsapp_text(tenant_id, from_number, caption, wa_token)
+        
+        after_msg = "Inmein se koi pasand aaya ya mazeed options dekhne hain? 👇"
+        buttons = ["Sasta option 📉", "Koi aur option 🔄", "Visit karna 📅"]
+        send_whatsapp_buttons(tenant_id, from_number, after_msg, buttons, wa_token)
+        
+        chat_hist.append({"role": "assistant", "content": f"Sent properties and options."})
+    else:
+        fail_msg = "Filhal is criteria ke mutabiq koi exact match nahi mila, lekin humari team is par kaam kar rahi hai aur jald aapko update karegi! ⏳"
+        send_whatsapp_text(tenant_id, from_number, fail_msg, wa_token)
+        send_whatsapp_buttons(tenant_id, from_number, "Kiya tabdeel karna chahte hain?", ["Change Location", "Change Budget", "Restart"], wa_token)
+        chat_hist.append({"role": "assistant", "content": fail_msg})
 
 # =========================================================================================
 # NLP PARAMETER EXTRACTION
@@ -381,7 +467,7 @@ def process_whatsapp_data(data: dict):
                 
                 # Initial Greeting or Returning User
                 is_new_session = not chat_hist
-                is_stale_session = now - session.get("last_interaction", now) > 7200
+                is_stale_session = now - session.get("last_interaction", now) > 86400 # 24 hours memory
                 is_greeting = msg_body.lower() in ["hi", "hello", "salam", "assalam o alaikum", "menu", "start", "hey"]
 
                 if (is_new_session or is_stale_session) and is_greeting:
@@ -389,7 +475,7 @@ def process_whatsapp_data(data: dict):
                     send_whatsapp_buttons(tenant_id, from_number, msg, ["Kharidni hai 🏠", "Rent pr leni hai 🏢", "Bechni hai 🤝"], wa_token)
                     chat_hist.append({"role": "user", "content": msg_body})
                     chat_hist.append({"role": "assistant", "content": msg})
-                    session["chat_history"] = chat_hist[-10:]
+                    session["chat_history"] = chat_hist[-50:]
                     save_chat_history(from_number, tenant_id, "user", msg_body)
                     save_chat_history(from_number, tenant_id, "assistant", msg)
                     save_user_session(from_number, tenant_id, session)
@@ -421,33 +507,24 @@ def process_whatsapp_data(data: dict):
                         ai_reply = "Aap kya bechna chahte hain? 🏡 (Ghar, Plot, Commercial?)"
                     elif "change" in btn_id:
                         session["search_confirmed"] = False
-                        ai_reply = "Kya tabdeel karna chahte hain? 🔄 Location, Budget ya kuch aur?"
+                        session["awaiting_confirmation"] = False
+                        ai_reply = "Bilkul! Aap kya tabdeel karna chahte hain? 🔄 (Jaise: 'Budget 5 Crore' ya 'Location DHA')"
                     elif "confirm" in btn_id:
                         session["search_confirmed"] = True
                         logger.info(f"🔍 Starting property search for session: {session}")
-                        
-                        crm = GoogleSheetCRM(tenant_config.get("property_sheet_name", ""))
-                        properties = crm.search_properties(
-                            location=session.get("location"),
-                            property_type=session.get("property_type"),
-                            purpose=session.get("purpose"),
-                            bhk=session.get("bhk"),
-                            budget=session.get("budget")
-                        )
-                        
-                        ai_reply = "Property search start kar di gayi hai... 🔍\n\n"
-                        if properties:
-                            ai_reply += "Yeh rahi aapke criteria ke mutabiq kuch behtareen properties:\n\n"
-                            for idx, p in enumerate(properties, 1):
-                                title = p.get('Title', f"Property {idx}")
-                                price = p.get('Price', 'N/A')
-                                loc = p.get('Location', session.get('location', 'N/A'))
-                                desc = p.get('Description', '')
-                                prop_id = p.get('ID', f"ID-{idx}")
-                                ai_reply += f"*{title}*\n📍 {loc}\n💰 {price}\n📝 {desc}\n🆔 (ID: {prop_id})\n\n"
-                            ai_reply += "Agar aap kisi property ka visit book karna chahte hain toh bas 'Visit [ID]' likh kar bhejein! 📅"
-                        else:
-                            ai_reply += "Filhal is criteria ke mutabiq koi exact match nahi mila, lekin humari team is par kaam kar rahi hai aur jald aapko update karegi! ⏳"
+                        execute_property_search(session, tenant_config, wa_token, from_number, tenant_id, chat_hist)
+                        ai_reply = ""
+                    elif "sasta" in btn_id:
+                        if session.get("budget"): session["budget"] = int(session["budget"] * 0.8)
+                        session["search_confirmed"] = True
+                        logger.info(f"🔍 Starting sasta property search for session: {session}")
+                        execute_property_search(session, tenant_config, wa_token, from_number, tenant_id, chat_hist)
+                        ai_reply = ""
+                    elif "aur" in btn_id:
+                        session["search_confirmed"] = True
+                        logger.info(f"🔍 Starting alternative property search for session: {session}")
+                        execute_property_search(session, tenant_config, wa_token, from_number, tenant_id, chat_hist)
+                        ai_reply = ""
                     elif "visit" in btn_id:
                         session["state"] = "SCHEDULING_VISIT"
                         session["funnel_state"] = "AWAITING_VISIT_INFO"
@@ -457,7 +534,7 @@ def process_whatsapp_data(data: dict):
                         send_whatsapp_text(tenant_id, from_number, ai_reply, wa_token)
                         chat_hist.append({"role": "user", "content": msg_body})
                         chat_hist.append({"role": "assistant", "content": ai_reply})
-                        session["chat_history"] = chat_hist[-10:]
+                        session["chat_history"] = chat_hist[-50:]
                         save_chat_history(from_number, tenant_id, "user", msg_body)
                         save_chat_history(from_number, tenant_id, "assistant", ai_reply)
                     
@@ -468,12 +545,13 @@ def process_whatsapp_data(data: dict):
                 if session.get("awaiting_confirmation"):
                     if re.search(r'\b(yes|haan|theek|done)\b', msg_body.lower()):
                         session["search_confirmed"] = True
-                        send_whatsapp_text(tenant_id, from_number, "Search confirmed. Retrieving properties...", wa_token)
+                        logger.info(f"🔍 Starting property search for session: {session}")
+                        execute_property_search(session, tenant_config, wa_token, from_number, tenant_id, chat_hist)
                         save_user_session(from_number, tenant_id, session)
                         return
-                    elif re.search(r'\b(change|badal|galat)\b', msg_body.lower()):
+                    elif re.search(r'\b(change|badal|galat|no|nahi)\b', msg_body.lower()):
                         session["awaiting_confirmation"] = False
-                        send_whatsapp_text(tenant_id, from_number, "Kya change karna chahte hain? Location ya budget?", wa_token)
+                        send_whatsapp_text(tenant_id, from_number, "Bilkul! Kya tabdeel karna chahte hain? 🔄 (Jaise: 'Budget 8 Crore' ya 'Location Bahria Town')", wa_token)
                         save_user_session(from_number, tenant_id, session)
                         return
                     else:
@@ -502,7 +580,7 @@ def process_whatsapp_data(data: dict):
                 logger.info(f"🤖 Calling LLM for {from_number}...")
                 sys_prompt = PK_MASTER_PROMPT + f"\n\nCURRENT SESSION STATE: {json.dumps(session)}"
                 messages = [{"role": "system", "content": sys_prompt}]
-                messages.extend(chat_hist[-6:])
+                messages.extend(chat_hist[-40:])
                 messages.append({"role": "user", "content": msg_body})
                 
                 llm_res = chat_completion_fallback(messages)
@@ -518,9 +596,11 @@ def process_whatsapp_data(data: dict):
                         for k in ["location", "purpose", "property_type", "bhk", "budget"]:
                             if parsed.get(k): session[k] = parsed[k]
                             
-                        if parsed.get("intent") == "execute_search" or all(session.get(k) for k in ["purpose", "location", "budget", "property_type"]):
+                        if parsed.get("intent") == "qa":
+                            ai_reply = parsed.get("reply_text", llm_res)
+                        elif parsed.get("intent") == "execute_search" or (all(session.get(k) for k in ["purpose", "location", "budget", "property_type"]) and parsed.get("intent") != "qa"):
                             session["awaiting_confirmation"] = True
-                            ai_reply = parsed.get("reply_text", "Sari details mil gayi hain. Kya main search shuru karun? (Haan / Nahi)")
+                            ai_reply = format_search_confirmation(session)
                         else:
                             ai_reply = parsed.get("reply_text", llm_res)
                     except Exception as parse_err:
@@ -528,7 +608,7 @@ def process_whatsapp_data(data: dict):
                 
                 chat_hist.append({"role": "user", "content": msg_body})
                 chat_hist.append({"role": "assistant", "content": ai_reply})
-                session["chat_history"] = chat_hist[-10:]
+                session["chat_history"] = chat_hist[-50:]
                 
                 save_chat_history(from_number, tenant_id, "user", msg_body)
                 save_chat_history(from_number, tenant_id, "assistant", ai_reply)
