@@ -223,9 +223,10 @@ class GoogleSheetCRM:
         except:
             return False, "System error"
 
-    def search_properties(self, location, property_type, purpose, bhk=None, budget=None, limit=2):
+    def search_properties(self, location, property_type, purpose, bhk=None, budget=None, limit=2, exclude_ids=None):
         if not self.client:
             return []
+        exclude_ids = exclude_ids or []
         try:
             # The worksheet is the same as the sheet name
             try:
@@ -236,6 +237,8 @@ class GoogleSheetCRM:
             records = sheet.get_all_records()
             results = []
             for r in records:
+                if str(r.get("Property_ID", "")) in exclude_ids: continue
+                
                 r_city = str(r.get("City", "")).lower()
                 r_society = str(r.get("Society_Area", "")).lower()
                 r_type = str(r.get("Property_Type", "")).lower()
@@ -257,13 +260,21 @@ class GoogleSheetCRM:
                 price = f"Rs {r.get('Demand_PKR', 'N/A')}"
                 desc = f"Phase: {r.get('Phase_Block', '-')} | Possession: {r.get('Possession', '-')}"
                 
+                images = []
+                for i in range(1, 10):
+                    col = "Main_Image" if i == 1 else f"Image_{i}"
+                    img = str(r.get(col, "")).strip()
+                    if img: images.append(img)
+                
                 formatted_p = {
                     "Title": title,
                     "Location": loc,
                     "Price": price,
                     "Description": desc,
                     "ID": str(r.get("Property_ID", "")),
-                    "Image": str(r.get("Main_Image", ""))
+                    "Images": images,
+                    "Raw_BHK": str(r.get("BHK", "")),
+                    "Raw_Budget": r.get("Demand_PKR", 0)
                 }
                 results.append(formatted_p)
                 if len(results) >= limit: break
@@ -272,6 +283,58 @@ class GoogleSheetCRM:
         except Exception as e:
             logger.error(f"search_properties error: {e}", exc_info=True)
             return []
+
+    def search_similar_properties(self, location, property_type, purpose, exclude_ids):
+        if not self.client: return None
+        try:
+            try:
+                sheet = self.doc.worksheet(self.sheet_id)
+            except:
+                sheet = self.doc.sheet1
+                
+            records = sheet.get_all_records()
+            for r in records:
+                prop_id = str(r.get("Property_ID", ""))
+                if prop_id in exclude_ids: continue
+                
+                r_city = str(r.get("City", "")).lower()
+                r_society = str(r.get("Society_Area", "")).lower()
+                r_type = str(r.get("Property_Type", "")).lower()
+                r_purpose = str(r.get("Listing_Type", "")).lower()
+                
+                if location and location.lower() not in r_city and location.lower() not in r_society: continue
+                if property_type and property_type.lower() not in r_type: continue
+                if purpose and purpose.lower() not in r_purpose: continue
+                
+                bhk_str = f"{r.get('BHK')} BHK " if r.get('BHK') else ""
+                size_str = f"{r.get('Size')} " if r.get('Size') else ""
+                prop_type_str = str(r.get('Property_Type', 'Property')).title()
+                
+                title = f"{bhk_str}{size_str}{prop_type_str} in {r.get('Society_Area', '')}"
+                loc = f"{r.get('Society_Area', '')}, {r.get('City', '')}"
+                price = f"Rs {r.get('Demand_PKR', 'N/A')}"
+                desc = f"Phase: {r.get('Phase_Block', '-')} | Possession: {r.get('Possession', '-')}"
+                
+                images = []
+                for i in range(1, 10):
+                    col = "Main_Image" if i == 1 else f"Image_{i}"
+                    img = str(r.get(col, "")).strip()
+                    if img: images.append(img)
+                
+                return {
+                    "Title": title,
+                    "Location": loc,
+                    "Price": price,
+                    "Description": desc,
+                    "ID": prop_id,
+                    "Images": images,
+                    "Raw_BHK": str(r.get("BHK", "")),
+                    "Raw_Budget": r.get("Demand_PKR", 0)
+                }
+            return None
+        except Exception as e:
+            logger.error(f"search_similar_properties error: {e}")
+            return None
 
 def format_search_confirmation(session):
     is_sell = session.get("purpose") == "sell"
@@ -325,45 +388,54 @@ def save_seller_lead(session, tenant_config, phone):
     name = session.get("user_name", "")
     crm.append_seller_lead(phone, name, ptype, loc, size, bhk, demand)
 
-def execute_property_search(session, tenant_config, wa_token, from_number, tenant_id, chat_hist):
-    send_whatsapp_text(tenant_id, from_number, "Property search start kar di gayi hai... 🔍", wa_token)
+def execute_property_search(session, tenant_config, wa_token, from_number, tenant_id, chat_hist, is_recommendation=False):
+    if not is_recommendation:
+        send_whatsapp_text(tenant_id, from_number, "Property search start kar di gayi hai... 🔍", wa_token)
     
     crm = GoogleSheetCRM(tenant_config.get("property_sheet_name", ""))
-    properties = crm.search_properties(
-        location=session.get("location"),
-        property_type=session.get("property_type"),
-        purpose=session.get("purpose"),
-        bhk=session.get("bhk"),
-        budget=session.get("budget")
-    )
+    sent_props = session.get("sent_properties", [])
+    exclude_ids = [str(p.get("ID", "")) for p in sent_props]
+    
+    properties = []
+    if not is_recommendation:
+        properties = crm.search_properties(
+            location=session.get("location"),
+            property_type=session.get("property_type"),
+            purpose=session.get("purpose"),
+            bhk=session.get("bhk"),
+            budget=session.get("budget"),
+            exclude_ids=exclude_ids
+        )
+    elif session.get("recommended_property"):
+        properties = [session["recommended_property"]]
+        session["recommended_property"] = None
     
     if properties:
-        sent_list = []
         for idx, p in enumerate(properties, 1):
             title = p.get('Title', f"Property {idx}")
             price = p.get('Price', 'N/A')
             loc = p.get('Location', session.get('location', 'N/A'))
             desc = p.get('Description', '')
             prop_id = p.get('ID', f"ID-{idx}")
-            image_url = p.get('Image', '')
+            images = p.get('Images', [])
             
             caption = f"*{title}*\n📍 {loc}\n💰 {price}\n📝 {desc}\n🆔 (ID: {prop_id})"
             
-            msg_id = None
-            if image_url:
-                msg_id = send_whatsapp_image(tenant_id, from_number, image_url, caption, wa_token)
-                if not msg_id:
-                    msg_id = send_whatsapp_text(tenant_id, from_number, caption, wa_token)
-            else:
-                msg_id = send_whatsapp_text(tenant_id, from_number, caption, wa_token)
+            # Send TEXT with details first
+            msg_id = send_whatsapp_text(tenant_id, from_number, caption, wa_token)
+            
+            # Send ALL IMAGES sequentially
+            for img_url in images:
+                send_whatsapp_image(tenant_id, from_number, img_url, "", wa_token)
+                time.sleep(0.5)
                 
             if msg_id:
                 p["message_id"] = msg_id
-                sent_list.append(p)
+                sent_props.append(p)
                 
-        session["sent_properties"] = sent_list
-        if len(sent_list) == 1:
-            session["active_property"] = sent_list[0].get("ID")
+        session["sent_properties"] = sent_props
+        if len(sent_props) == 1:
+            session["active_property"] = sent_props[0].get("ID")
         else:
             session["active_property"] = None
         
@@ -372,12 +444,37 @@ def execute_property_search(session, tenant_config, wa_token, from_number, tenan
         buttons = ["Sasta option 📉", "Koi aur option 🔄", "Visit karna 📅"]
         send_whatsapp_buttons(tenant_id, from_number, after_msg, buttons, wa_token)
         
-        chat_hist.append({"role": "assistant", "content": f"Sent {len(sent_list)} properties."})
+        chat_hist.append({"role": "assistant", "content": f"Sent {len(properties)} properties."})
     else:
-        fail_msg = "Filhal is criteria ke mutabiq koi exact match nahi mila, lekin humari team is par kaam kar rahi hai aur jald aapko update karegi! ⏳"
-        send_whatsapp_text(tenant_id, from_number, fail_msg, wa_token)
-        send_whatsapp_buttons(tenant_id, from_number, "Kiya tabdeel karna chahte hain?", ["Change Location", "Change Budget", "Restart"], wa_token)
-        chat_hist.append({"role": "assistant", "content": fail_msg})
+        # NO EXACT MATCH - Check for recommendations
+        rec = crm.search_similar_properties(
+            location=session.get("location"),
+            property_type=session.get("property_type"),
+            purpose=session.get("purpose"),
+            exclude_ids=exclude_ids
+        )
+        
+        if rec:
+            session["recommended_property"] = rec
+            b_diff = f"Demand Rs {rec.get('Raw_Budget')} hai"
+            if rec.get("Raw_BHK") and str(session.get("bhk")) != str(rec.get("Raw_BHK")):
+                b_diff = f"ismein {rec.get('Raw_BHK')} bedrooms hain"
+                
+            if sent_props:
+                msg = f"Janab aapki exact requirements ke mutabiq abhi yahi property thi jo main bhej chuka hu. Albata ek aur milti julti property available hai jismein {b_diff}. Kya main aapko yeh dikhaun?"
+            else:
+                msg = f"Janab aapki exact requirements ke mutabiq filhal koi match nahi mila. Albata ek milti julti property available hai jismein {b_diff}. Kya main aapko yeh dikhaun?"
+                
+            send_whatsapp_buttons(tenant_id, from_number, msg, ["Haan dikhao 👁️", "Requirements badlo 🔄"], wa_token)
+            chat_hist.append({"role": "assistant", "content": msg})
+        else:
+            if sent_props:
+                fail_msg = "Janab aapki requirements ke mutabiq abhi yahi available hai jo main bhej chuka hu. Jese hi mazeed aayengi main update kar dunga!"
+            else:
+                fail_msg = "Filhal is criteria ke mutabiq koi match nahi mila, lekin humari team is par kaam kar rahi hai aur jald aapko update karegi! ⏳"
+            send_whatsapp_text(tenant_id, from_number, fail_msg, wa_token)
+            send_whatsapp_buttons(tenant_id, from_number, "Kiya tabdeel karna chahte hain?", ["Change Location", "Change Budget", "Restart"], wa_token)
+            chat_hist.append({"role": "assistant", "content": fail_msg})
 
 # =========================================================================================
 # NLP PARAMETER EXTRACTION
@@ -688,9 +785,26 @@ def process_whatsapp_data(data: dict):
                         ai_reply = f"Janab aapne apna budget {budget_str} bataya tha. Ab mujhe apna naya budget batayein taake main aapke liye nayi property dhoondun."
                     elif "aur" in btn_id:
                         session["search_confirmed"] = False
-                        session["awaiting_confirmation"] = True
-                        ai_reply = "Behtareen, aapko koi aur option dikha deta hu. Bas ek cheez confirm kar dein, neechay di gayi requirements ke mutabiq dikhaun ya aapne apni requirements change karni hain?"
-                        ai_reply += "\n\n" + format_search_confirmation(session)
+                        session["awaiting_confirmation"] = False
+                        msg = "Behtareen, aapko koi aur option dikha deta hu. Bas ek cheez confirm kar dein, aap inhi requirements par mazeed options dekhna chahte hain ya requirements change karni hain?"
+                        send_whatsapp_buttons(tenant_id, from_number, msg, ["Inhi par dikhao 👁️", "Change karni hain 🔄"], wa_token)
+                        chat_hist.append({"role": "user", "content": msg_body})
+                        chat_hist.append({"role": "assistant", "content": msg})
+                        session["chat_history"] = chat_hist[-50:]
+                        save_user_session(from_number, tenant_id, session)
+                        return
+                    elif "inhi" in btn_id:
+                        logger.info(f"🔍 Starting property search for session: {session} (Inhi par dikhao)")
+                        execute_property_search(session, tenant_config, wa_token, from_number, tenant_id, chat_hist)
+                        ai_reply = ""
+                    elif "haan" in btn_id:
+                        logger.info(f"🔍 Sending recommended property for session: {session}")
+                        execute_property_search(session, tenant_config, wa_token, from_number, tenant_id, chat_hist, is_recommendation=True)
+                        ai_reply = ""
+                    elif "badlo" in btn_id:
+                        session["search_confirmed"] = False
+                        session["awaiting_confirmation"] = False
+                        ai_reply = "Bilkul! Aap kya tabdeel karna chahte hain? 🔄 (Jaise: 'Budget 5 Crore' ya 'Location DHA')"
                     elif "visit" in btn_id:
                         session["state"] = "SCHEDULING_VISIT"
                         session["funnel_state"] = "AWAITING_VISIT_INFO"
