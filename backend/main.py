@@ -125,8 +125,13 @@ def send_whatsapp_buttons(tenant_id: str, phone: str, text: str, buttons: list, 
     
     actions = []
     for btn in buttons:
-        btn_id = btn.lower().replace(" ", "_").strip("🏠🏢🤝➕")
-        actions.append({"type": "reply", "reply": {"id": f"btn_{btn_id}", "title": btn}})
+        if isinstance(btn, dict):
+            btn_id = btn["id"]
+            title = btn["title"]
+        else:
+            btn_id = f"btn_{btn.lower().replace(' ', '_').strip('🏠🏢🤝➕')}"
+            title = btn
+        actions.append({"type": "reply", "reply": {"id": btn_id, "title": title}})
     
     payload = {
         "messaging_product": "whatsapp", "to": phone, "type": "interactive",
@@ -458,7 +463,7 @@ def execute_property_search(session, tenant_config, wa_token, from_number, tenan
         
         time.sleep(1.5)
         after_msg = "Inmein se koi pasand aaya ya mazeed options dekhne hain? 👇"
-        buttons = ["Sasta option 📉", "Koi aur option 🔄", "Visit karna 📅"]
+        buttons = ["Sasta option 📉", "Koi aur option 🔄", {"id": f"visit_{prop_id}", "title": "Visit karna 📅"}]
         send_whatsapp_buttons(tenant_id, from_number, after_msg, buttons, wa_token)
         
         chat_hist.append({"role": "assistant", "content": f"Sent {len(properties)} properties."})
@@ -822,10 +827,16 @@ def process_whatsapp_data(data: dict):
                         session["search_confirmed"] = False
                         session["awaiting_confirmation"] = False
                         ai_reply = "Bilkul! Aap kya tabdeel karna chahte hain? 🔄 (Jaise: 'Budget 5 Crore' ya 'Location DHA')"
-                    elif "visit" in btn_id:
+                    elif btn_id.startswith("visit_") or "visit" in btn_id:
                         session["state"] = "SCHEDULING_VISIT"
                         session["funnel_state"] = "AWAITING_VISIT_INFO"
-                        if len(session.get("sent_properties", [])) == 1:
+                        
+                        if btn_id.startswith("visit_"):
+                            session["active_property"] = btn_id.replace("visit_", "")
+                            
+                        if session.get("active_property"):
+                            ai_reply = "Zabardast! Visit karne ke liye bas aap mujhe apna Pura Naam bata dein, main aapki details aage forward kar deta hu aur aapse jald raabta karenge. 📝"
+                        elif len(session.get("sent_properties", [])) == 1:
                             session["active_property"] = session["sent_properties"][0].get("ID")
                             ai_reply = "Zabardast! Visit karne ke liye bas aap mujhe apna Pura Naam bata dein, main aapki details aage forward kar deta hu aur aapse jald raabta karenge. 📝"
                         else:
