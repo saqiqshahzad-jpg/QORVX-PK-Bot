@@ -168,7 +168,17 @@ class GoogleSheetCRM:
     def __init__(self, sheet_id: str):
         self.sheet_id = sheet_id
         try:
-            self.client = gspread.service_account()
+            creds_env = os.getenv("GOOGLE_CREDENTIALS")
+            if creds_env:
+                try:
+                    creds_dict = json.loads(creds_env)
+                    self.client = gspread.service_account_from_dict(creds_dict)
+                except Exception as parse_err:
+                    logger.error(f"Failed to parse GOOGLE_CREDENTIALS: {parse_err}")
+                    self.client = gspread.service_account()
+            else:
+                self.client = gspread.service_account()
+                
             try:
                 self.doc = self.client.open_by_key(sheet_id)
             except Exception:
@@ -239,8 +249,8 @@ class GoogleSheetCRM:
         rooms = f"{bhk} BHK " if bhk else ""
         price = f"{budget/10000000:g} Crore" if budget else "Contact for Price"
         return [
-            {"Title": f"Premium {rooms}{ptype}", "Location": loc, "Price": price, "Description": "Beautifully designed with modern amenities.", "ID": "PR-101", "Image": "https://images.unsplash.com/photo-1600596542815-ffad4c1539a9?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80"},
-            {"Title": f"Luxury {rooms}{ptype}", "Location": loc, "Price": price, "Description": "Spacious and well-ventilated with great view.", "ID": "PR-102", "Image": "https://images.unsplash.com/photo-1512917774080-9991f1c4c750?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80"}
+            {"Title": f"Premium {rooms}{ptype}", "Location": loc, "Price": price, "Description": "Beautifully designed with modern amenities.", "ID": "PR-101", "Image": ""},
+            {"Title": f"Luxury {rooms}{ptype}", "Location": loc, "Price": price, "Description": "Spacious and well-ventilated with great view.", "ID": "PR-102", "Image": ""}
         ]
 
 def format_search_confirmation(session):
