@@ -225,7 +225,7 @@ class GoogleSheetCRM:
 
     def search_properties(self, location, property_type, purpose, bhk=None, budget=None, limit=2):
         if not self.client:
-            return self._mock_properties(location, property_type, bhk, budget)
+            return []
         try:
             # The worksheet is the same as the sheet name
             try:
@@ -268,20 +268,10 @@ class GoogleSheetCRM:
                 results.append(formatted_p)
                 if len(results) >= limit: break
                 
-            return results if results else self._mock_properties(location, property_type, bhk, budget)
+            return results
         except Exception as e:
             logger.error(f"search_properties error: {e}", exc_info=True)
-            return self._mock_properties(location, property_type, bhk, budget)
-
-    def _mock_properties(self, location, property_type, bhk, budget):
-        loc = location or "Prime Location"
-        ptype = (property_type or "Property").title()
-        rooms = f"{bhk} BHK " if bhk else ""
-        price = f"{budget/10000000:g} Crore" if budget else "Contact for Price"
-        return [
-            {"Title": f"Premium {rooms}{ptype}", "Location": loc, "Price": price, "Description": "Beautifully designed with modern amenities.", "ID": "PR-101", "Image": ""},
-            {"Title": f"Luxury {rooms}{ptype}", "Location": loc, "Price": price, "Description": "Spacious and well-ventilated with great view.", "ID": "PR-102", "Image": ""}
-        ]
+            return []
 
 def format_search_confirmation(session):
     is_sell = session.get("purpose") == "sell"
