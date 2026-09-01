@@ -50,8 +50,8 @@ def get_tenant_config(tenant_id: str):
 
 def get_user_session(phone: str, tenant_id: str):
     default_session = {
-        "purpose": None, "property_type": None, "bhk": None, "location": None, 
-        "budget": None, "state": None, "funnel_state": None, 
+        "purpose": None, "property_type": None, "bhk": None, "size": None, "location": None, 
+        "budget": None, "user_name": None, "state": None, "funnel_state": None, 
         "awaiting_confirmation": False, "search_confirmed": False, "chat_history": [], 
         "active_property": None, "archived_intents": [], "last_interaction": time.time()
     }
@@ -176,6 +176,16 @@ class GoogleSheetCRM:
         except:
             return False
 
+    def append_seller_lead(self, phone: str, name: str, property_type: str, location: str, size: str, bedrooms: str, demand: str):
+        if not self.client: return False
+        try:
+            sheet = self.doc.worksheet("Seller_Leads")
+            sheet.append_row([time.strftime("%d-%m-%Y %H:%M:%S"), phone, name, property_type, location, size, bedrooms, demand])
+            return True
+        except Exception as e:
+            logger.error(f"Seller Lead save failed: {e}")
+            return False
+
     def book_strategy(self, phone: str, date: str, time_str: str):
         if not self.client: return False, "System error"
         try:
@@ -221,6 +231,7 @@ class GoogleSheetCRM:
         ]
 
 def format_search_confirmation(session):
+    is_sell = session.get("purpose") == "sell"
     maqsad_map = {"buy": "Kharidna", "sell": "Bechna", "rent": "Rent"}
     maqsad = maqsad_map.get(session.get("purpose", ""), str(session.get("purpose", "-")).title())
     
@@ -241,14 +252,35 @@ def format_search_confirmation(session):
         else:
             budget = str(b_val)
             
-    text = f"Behtareen! Aapki search details yeh hain:\n\n"
+    text = f"Behtareen! Aapki property details yeh hain:\n\n" if is_sell else f"Behtareen! Aapki search details yeh hain:\n\n"
     text += f"🎯 Maqsad: {maqsad}\n"
     text += f"📍 Location: {loc}\n"
     text += f"🏢 Property Type: {ptype}\n"
-    text += f"🛏️ Bedrooms: {bhk}\n"
-    text += f"💰 Budget: {budget}\n\n"
-    text += "Kya aap in details ko confirm karte hain?"
+    
+    if ptype.lower() in ["plot", "warehouse", "zameen"]:
+        text += f"📐 Size: {session.get('size', '-')}\n"
+    else:
+        text += f"🛏️ Bedrooms: {bhk}\n"
+        
+    if is_sell:
+        text += f"💰 Demand: {budget}\n"
+        if session.get("user_name"):
+            text += f"👤 Name: {session.get('user_name')}\n"
+    else:
+        text += f"💰 Budget: {budget}\n"
+        
+    text += "\nKya aap in details ko confirm karte hain?"
     return text
+
+def save_seller_lead(session, tenant_config, phone):
+    crm = GoogleSheetCRM(tenant_config.get("property_sheet_name", ""))
+    ptype = session.get("property_type", "").title()
+    loc = session.get("location", "").title()
+    size = session.get("size", "-")
+    bhk = str(session.get("bhk", "-"))
+    demand = str(session.get("budget", "-"))
+    name = session.get("user_name", "")
+    crm.append_seller_lead(phone, name, ptype, loc, size, bhk, demand)
 
 def execute_property_search(session, tenant_config, wa_token, from_number, tenant_id, chat_hist):
     send_whatsapp_text(tenant_id, from_number, "Property search start kar di gayi hai... 🔍", wa_token)
@@ -342,18 +374,19 @@ OUTPUT ONLY JSON.
   "purpose": "buy" | "rent" | "sell" | null,
   "property_type": "house" | "flat" | "plot" | "warehouse" | null,
   "bhk": integer | null,
+  "size": "string | null",
   "budget": integer | null,
+  "user_name": "string | null",
   "reply_text": "Professional pure Pakistani Roman Urdu response"
 }
 
 RULES:
 1. Iron Dome: If off-topic (politics, coding), intent="qa" and reply="Maazrat Janab 🙏... Mera kaam sirf property kharidne aur bechne tak mehdood hai. 🏢"
-2. Property Types: Map "ghar", "bangla", "banglow", "portion", "kothi" to "house". Map "flat", "apartment" to "flat". Map "plot", "zameen", "land" to "plot".
-3. Mandatory Fields: Ask for missing fields ONE by ONE nicely. 
-4. Bedrooms Rule: If property_type is "house" or "flat", you MUST ask for bedrooms (bhk) if missing! For "plot"/"warehouse", DO NOT ask.
-5. Contradiction: If user changes param, set intent="confirm_change".
-6. Language: STRICTLY use pure Pakistani Roman Urdu (e.g., "Zabardast", "Bohot aala"). DO NOT use Indian terms. NEVER use weird translations like "Crude" for Crore. Just ask "Aapka budget kitna hai?" naturally.
-7. Marla/Kanal are sizes, NOT bhk. Emojis: ALWAYS include relevant emojis! ✨
+2. Property Types: Map "ghar", "bangla", "portion" to "house". Map "flat" to "flat". Map "plot", "zameen" to "plot".
+3. Fields for BUY/RENT: Need purpose, location, budget, property_type. Ask ONE by ONE.
+4. Fields for SELL: Need purpose, location, property_type, budget (Demand). When asking for Demand, politely ask for their Name too ("Apni demand aur naam bata dein"). If they only provide Demand and ignore name, DO NOT ask for name again.
+5. Size/Bedrooms Rule: If "house" or "flat", you MUST ask for bedrooms (bhk). If "plot", "warehouse", or "zameen", you MUST ask for size (e.g., Marla, Kanal) and DO NOT ask for bedrooms.
+6. Language: STRICTLY pure Pakistani Roman Urdu. NEVER use "Crude". Emojis: ALWAYS use relevant emojis! ✨
 """
 
 def chat_completion_fallback(messages: list):
@@ -519,9 +552,15 @@ def process_whatsapp_data(data: dict):
                         ai_reply = "Bilkul! Aap kya tabdeel karna chahte hain? 🔄 (Jaise: 'Budget 5 Crore' ya 'Location DHA')"
                     elif "confirm" in btn_id:
                         session["search_confirmed"] = True
-                        logger.info(f"🔍 Starting property search for session: {session}")
-                        execute_property_search(session, tenant_config, wa_token, from_number, tenant_id, chat_hist)
-                        ai_reply = ""
+                        if session.get("purpose") == "sell":
+                            logger.info(f"📝 Saving Seller Lead for session: {session}")
+                            save_seller_lead(session, tenant_config, from_number)
+                            name = session.get("user_name") or "Janab"
+                            ai_reply = f"✨ *{name}*, aapki property ki details hamari premium listing mein aage bhej di gayi hain. Humari expert team iska deeply tajziya karegi aur jald hi behtareen kharidar (buyer) ke sath aapse raabta karegi. Shukriya! 🤝"
+                        else:
+                            logger.info(f"🔍 Starting property search for session: {session}")
+                            execute_property_search(session, tenant_config, wa_token, from_number, tenant_id, chat_hist)
+                            ai_reply = ""
                     elif "sasta" in btn_id:
                         if session.get("budget"): session["budget"] = int(session["budget"] * 0.8)
                         session["search_confirmed"] = True
@@ -553,8 +592,15 @@ def process_whatsapp_data(data: dict):
                 if session.get("awaiting_confirmation"):
                     if re.search(r'\b(yes|haan|theek|done)\b', msg_body.lower()):
                         session["search_confirmed"] = True
-                        logger.info(f"🔍 Starting property search for session: {session}")
-                        execute_property_search(session, tenant_config, wa_token, from_number, tenant_id, chat_hist)
+                        if session.get("purpose") == "sell":
+                            logger.info(f"📝 Saving Seller Lead for session: {session}")
+                            save_seller_lead(session, tenant_config, from_number)
+                            name = session.get("user_name") or "Janab"
+                            success_msg = f"✨ *{name}*, aapki property ki details hamari premium listing mein aage bhej di gayi hain. Humari expert team iska deeply tajziya karegi aur jald hi behtareen kharidar (buyer) ke sath aapse raabta karegi. Shukriya! 🤝"
+                            send_whatsapp_text(tenant_id, from_number, success_msg, wa_token)
+                        else:
+                            logger.info(f"🔍 Starting property search for session: {session}")
+                            execute_property_search(session, tenant_config, wa_token, from_number, tenant_id, chat_hist)
                         save_user_session(from_number, tenant_id, session)
                         return
                     elif re.search(r'\b(change|badal|galat|no|nahi)\b', msg_body.lower()):
@@ -602,13 +648,16 @@ def process_whatsapp_data(data: dict):
                         s_idx, e_idx = llm_res.find("{"), llm_res.rfind("}") + 1
                         parsed = json.loads(llm_res[s_idx:e_idx])
                         
-                        for k in ["location", "purpose", "property_type", "bhk", "budget"]:
+                        for k in ["location", "purpose", "property_type", "bhk", "budget", "size", "user_name"]:
                             if parsed.get(k): session[k] = parsed[k]
                             
                         is_ready = all(session.get(k) for k in ["purpose", "location", "budget", "property_type"])
                         ptype = session.get("property_type", "").lower()
-                        if is_ready and ptype not in ["plot", "warehouse", "zameen"] and not session.get("bhk"):
-                            is_ready = False
+                        if is_ready:
+                            if ptype not in ["plot", "warehouse", "zameen"] and not session.get("bhk"):
+                                is_ready = False
+                            elif ptype in ["plot", "warehouse", "zameen"] and not session.get("size"):
+                                is_ready = False
                             
                         if parsed.get("intent") == "qa":
                             ai_reply = parsed.get("reply_text", llm_res)
