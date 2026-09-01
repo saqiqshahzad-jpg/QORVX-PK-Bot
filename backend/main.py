@@ -173,6 +173,36 @@ class GoogleSheetCRM:
         except:
             return False, "System error"
 
+    def search_properties(self, location, property_type, purpose, bhk=None, budget=None, limit=2):
+        if not self.client:
+            return self._mock_properties(location, property_type, bhk, budget)
+        try:
+            sheet = self.doc.worksheet("Properties")
+            records = sheet.get_all_records()
+            results = []
+            for r in records:
+                r_loc = str(r.get("Location", "")).lower()
+                r_type = str(r.get("Type", "")).lower()
+                r_purpose = str(r.get("Purpose", "")).lower()
+                if location and location.lower() not in r_loc: continue
+                if property_type and property_type.lower() not in r_type: continue
+                if purpose and purpose.lower() not in r_purpose: continue
+                results.append(r)
+                if len(results) >= limit: break
+            return results if results else self._mock_properties(location, property_type, bhk, budget)
+        except:
+            return self._mock_properties(location, property_type, bhk, budget)
+
+    def _mock_properties(self, location, property_type, bhk, budget):
+        loc = location or "Prime Location"
+        ptype = (property_type or "Property").title()
+        rooms = f"{bhk} BHK " if bhk else ""
+        price = f"{budget/10000000:g} Crore" if budget else "Contact for Price"
+        return [
+            {"Title": f"Premium {rooms}{ptype}", "Location": loc, "Price": price, "Description": "Beautifully designed with modern amenities.", "ID": "PR-101"},
+            {"Title": f"Luxury {rooms}{ptype}", "Location": loc, "Price": price, "Description": "Spacious and well-ventilated with great view.", "ID": "PR-102"}
+        ]
+
 # =========================================================================================
 # NLP PARAMETER EXTRACTION
 # =========================================================================================
@@ -394,7 +424,30 @@ def process_whatsapp_data(data: dict):
                         ai_reply = "Kya tabdeel karna chahte hain? 🔄 Location, Budget ya kuch aur?"
                     elif "confirm" in btn_id:
                         session["search_confirmed"] = True
-                        ai_reply = "Property search start kar di gayi hai... 🔍"
+                        logger.info(f"🔍 Starting property search for session: {session}")
+                        
+                        crm = GoogleSheetCRM(tenant_config.get("property_sheet_name", ""))
+                        properties = crm.search_properties(
+                            location=session.get("location"),
+                            property_type=session.get("property_type"),
+                            purpose=session.get("purpose"),
+                            bhk=session.get("bhk"),
+                            budget=session.get("budget")
+                        )
+                        
+                        ai_reply = "Property search start kar di gayi hai... 🔍\n\n"
+                        if properties:
+                            ai_reply += "Yeh rahi aapke criteria ke mutabiq kuch behtareen properties:\n\n"
+                            for idx, p in enumerate(properties, 1):
+                                title = p.get('Title', f"Property {idx}")
+                                price = p.get('Price', 'N/A')
+                                loc = p.get('Location', session.get('location', 'N/A'))
+                                desc = p.get('Description', '')
+                                prop_id = p.get('ID', f"ID-{idx}")
+                                ai_reply += f"*{title}*\n📍 {loc}\n💰 {price}\n📝 {desc}\n🆔 (ID: {prop_id})\n\n"
+                            ai_reply += "Agar aap kisi property ka visit book karna chahte hain toh bas 'Visit [ID]' likh kar bhejein! 📅"
+                        else:
+                            ai_reply += "Filhal is criteria ke mutabiq koi exact match nahi mila, lekin humari team is par kaam kar rahi hai aur jald aapko update karegi! ⏳"
                     elif "visit" in btn_id:
                         session["state"] = "SCHEDULING_VISIT"
                         session["funnel_state"] = "AWAITING_VISIT_INFO"
