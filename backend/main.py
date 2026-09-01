@@ -93,9 +93,10 @@ def send_whatsapp_text(tenant_id: str, phone: str, text: str, token: str):
     payload = {"messaging_product": "whatsapp", "to": phone, "type": "text", "text": {"body": text}}
     try:
         res = requests.post(url, headers=headers, json=payload, timeout=10)
+        res.raise_for_status()
         return res.json().get("messages", [{}])[0].get("id")
     except Exception as e:
-        logger.error(f"WA Text Send Failed: {e}")
+        logger.error(f"WA Text Send Failed: {e} - Response: {res.text if 'res' in locals() else ''}")
         return None
 
 def send_whatsapp_image(tenant_id: str, phone: str, image_url: str, caption: str, token: str):
@@ -112,9 +113,10 @@ def send_whatsapp_image(tenant_id: str, phone: str, image_url: str, caption: str
     }
     try:
         res = requests.post(url, headers=headers, json=payload, timeout=10)
+        res.raise_for_status()
         return res.json().get("messages", [{}])[0].get("id")
     except Exception as e:
-        logger.error(f"WA Image Send Failed: {e}")
+        logger.error(f"WA Image Send Failed: {e} - Response: {res.text if 'res' in locals() else ''}")
         return None
 
 def send_whatsapp_buttons(tenant_id: str, phone: str, text: str, buttons: list, token: str):
@@ -175,13 +177,14 @@ class GoogleSheetCRM:
             logger.error(f"GoogleSheetCRM init failed for '{sheet_id}': {e}")
             self.client = None
 
-    def append_lead(self, phone: str, name: str, email: str, prop_id: str):
+    def append_lead(self, phone: str, name: str, prop_id: str):
         if not self.client: return False
         try:
             sheet = self.doc.worksheet("Leads")
-            sheet.append_row([time.strftime("%Y-%m-%d %H:%M:%S"), phone, name, email, prop_id, "PK"])
+            sheet.append_row([name, phone, prop_id, time.strftime("%d-%m-%Y %H:%M:%S")])
             return True
-        except:
+        except Exception as e:
+            logger.error(f"Lead save failed: {e}")
             return False
 
     def append_seller_lead(self, phone: str, name: str, property_type: str, location: str, size: str, bedrooms: str, demand: str):
@@ -319,6 +322,8 @@ def execute_property_search(session, tenant_config, wa_token, from_number, tenan
             msg_id = None
             if image_url:
                 msg_id = send_whatsapp_image(tenant_id, from_number, image_url, caption, wa_token)
+                if not msg_id:
+                    msg_id = send_whatsapp_text(tenant_id, from_number, caption, wa_token)
             else:
                 msg_id = send_whatsapp_text(tenant_id, from_number, caption, wa_token)
                 
@@ -332,6 +337,7 @@ def execute_property_search(session, tenant_config, wa_token, from_number, tenan
         else:
             session["active_property"] = None
         
+        time.sleep(1.5)
         after_msg = "Inmein se koi pasand aaya ya mazeed options dekhne hain? 👇"
         buttons = ["Sasta option 📉", "Koi aur option 🔄", "Visit karna 📅"]
         send_whatsapp_buttons(tenant_id, from_number, after_msg, buttons, wa_token)
@@ -568,16 +574,53 @@ def process_whatsapp_data(data: dict):
                     save_user_session(from_number, tenant_id, session)
                     return
 
-                # Lead Capture Booking Engine
-                if session.get("funnel_state") == "AWAITING_VISIT_INFO":
-                    # Simplified verification 
-                    if len(msg_body.split()) <= 4:
-                        crm = GoogleSheetCRM(tenant_config.get("property_sheet_name"))
-                        crm.append_lead(from_number, msg_body, "", session.get("active_property", "Unknown"))
-                        session["funnel_state"] = "COMPLETED"
-                        send_whatsapp_text(tenant_id, from_number, "Shukriya! Aapki details register ho gayi hain. Humari team jald raabta karegi.", wa_token)
+                if session.get("funnel_state") == "AWAITING_NEW_BUDGET":
+                    new_budget = parse_south_asian_budget(msg_body)
+                    if new_budget:
+                        session["budget"] = new_budget
+                        session["funnel_state"] = None
+                        session["awaiting_confirmation"] = True
+                        conf_msg = format_search_confirmation(session)
+                        send_whatsapp_buttons(tenant_id, from_number, conf_msg, ["Confirm", "Change"], wa_token)
                         save_user_session(from_number, tenant_id, session)
                         return
+                    else:
+                        send_whatsapp_text(tenant_id, from_number, "Maazrat, main budget samajh nahi saka. Baraye meherbani naya budget durust andaaz mein batayein (jaise: '5 Crore').", wa_token)
+                        save_user_session(from_number, tenant_id, session)
+                        return
+
+                # Lead Capture Booking Engine
+                if session.get("funnel_state") == "AWAITING_VISIT_INFO":
+                    sent_props = session.get("sent_properties", [])
+                    matches = re.findall(r'\b\d{2}\b', msg_body)
+                    found_id = session.get("active_property")
+                    
+                    if not found_id and matches:
+                        for m in matches:
+                            for sp in sent_props:
+                                pid = str(sp.get("ID", ""))
+                                if pid.endswith(m):
+                                    found_id = pid
+                                    break
+                    
+                    if not found_id and len(sent_props) > 1:
+                        # Couldn't find ID, ask again
+                        send_whatsapp_text(tenant_id, from_number, "Maazrat, mujhe property ID samajh nahi aayi. Baraye meherbani property ID ke aakhri 2 digits lazmi likhein.", wa_token)
+                        save_user_session(from_number, tenant_id, session)
+                        return
+                        
+                    # Extract Name (Remove the digits from text)
+                    name = re.sub(r'\b\d{2}\b', '', msg_body).strip()
+                    if not name: name = "Janab"
+                    
+                    crm = GoogleSheetCRM(tenant_config.get("property_sheet_name", ""))
+                    crm.append_lead(from_number, name.title(), found_id or "Unknown")
+                    session["funnel_state"] = "COMPLETED"
+                    
+                    save_msg = "Aapka message hamare agent tak chala gaya hai! Hum jald hi aapse visit ke hawale se raabta karenge. Shukriya! 🤝"
+                    send_whatsapp_text(tenant_id, from_number, save_msg, wa_token)
+                    save_user_session(from_number, tenant_id, session)
+                    return
 
                 # Interactive Fast-Track
                 if btn_id:
@@ -608,20 +651,24 @@ def process_whatsapp_data(data: dict):
                             execute_property_search(session, tenant_config, wa_token, from_number, tenant_id, chat_hist)
                             ai_reply = ""
                     elif "sasta" in btn_id:
-                        if session.get("budget"): session["budget"] = int(session["budget"] * 0.8)
-                        session["search_confirmed"] = True
-                        logger.info(f"🔍 Starting sasta property search for session: {session}")
-                        execute_property_search(session, tenant_config, wa_token, from_number, tenant_id, chat_hist)
-                        ai_reply = ""
+                        session["search_confirmed"] = False
+                        session["awaiting_confirmation"] = False
+                        session["funnel_state"] = "AWAITING_NEW_BUDGET"
+                        budget_str = session.get("budget", "")
+                        ai_reply = f"Janab aapne apna budget {budget_str} bataya tha. Ab mujhe apna naya budget batayein taake main aapke liye nayi property dhoondun."
                     elif "aur" in btn_id:
-                        session["search_confirmed"] = True
-                        logger.info(f"🔍 Starting alternative property search for session: {session}")
-                        execute_property_search(session, tenant_config, wa_token, from_number, tenant_id, chat_hist)
-                        ai_reply = ""
+                        session["search_confirmed"] = False
+                        session["awaiting_confirmation"] = True
+                        ai_reply = "Behtareen, aapko koi aur option dikha deta hu. Bas ek cheez confirm kar dein, neechay di gayi requirements ke mutabiq dikhaun ya aapne apni requirements change karni hain?"
+                        ai_reply += "\n\n" + format_search_confirmation(session)
                     elif "visit" in btn_id:
                         session["state"] = "SCHEDULING_VISIT"
                         session["funnel_state"] = "AWAITING_VISIT_INFO"
-                        ai_reply = "Visit book karne ke liye apna Pura Naam likh kar bhejein: 📝"
+                        if len(session.get("sent_properties", [])) == 1:
+                            session["active_property"] = session["sent_properties"][0].get("ID")
+                            ai_reply = "Zabardast! Visit karne ke liye bas aap mujhe apna Pura Naam bata dein, main aapki details aage forward kar deta hu aur aapse jald raabta karenge. 📝"
+                        else:
+                            ai_reply = "Zabardast! Visit karne ke liye bas apna Pura Naam aur property ID ke aakhri 2 digits likh kar bhejein (ID property ke message ke aakhir mein likhi hoti hai). Main details forward kar dunga. 📝"
                     
                     if ai_reply:
                         send_whatsapp_text(tenant_id, from_number, ai_reply, wa_token)
