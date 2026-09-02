@@ -159,7 +159,9 @@ def download_audio_and_transcribe(audio_id: str, token: str):
         if groq_client:
             with open(file_path, "rb") as file:
                 transcription = groq_client.audio.transcriptions.create(
-                    file=(file_path, file.read()), model="whisper-large-v3", language="en"
+                    file=(file_path, file.read()), 
+                    model="whisper-large-v3",
+                    prompt="The audio is in Urdu or English regarding real estate. If it is just background noise, silence, or unintelligible, do not hallucinate, just return empty text."
                 )
             return transcription.text
     except Exception as e:
@@ -695,9 +697,12 @@ def process_whatsapp_data(data: dict):
                         btn_id = msg["interactive"]["button_reply"]["id"]
                 elif msg_type == "audio":
                     transcription = download_audio_and_transcribe(msg["audio"]["id"], wa_token)
-                    if transcription: msg_body = transcription
+                    
+                    hallucinations = ["subscribe", "thanks for", "subtitles", "thank you", "bye"]
+                    if transcription and len(transcription.strip()) > 2 and not any(h in transcription.lower() for h in hallucinations): 
+                        msg_body = transcription
                     else:
-                        send_whatsapp_text(tenant_id, from_number, "Awaz clear nahi mili. Please type karein.", wa_token)
+                        send_whatsapp_text(tenant_id, from_number, "Janab apki voice suni mein ne network issue ya background noise ki waja se mein smjh nhi paya dubara krdein aap", wa_token)
                         return
                 else:
                     lock_msg = f"Arre wah, seedha {msg_type}? Lekin ek choti si rukawat hai, yeh demo version hai, isliye live media-scanning ka feature abhi restricted rakha gaya hai taake server load na barhe. Asli version mein AI khud tasveer parh kar rate bata deta hai. Batayein, filhal text mein koi property search karni hai?"
