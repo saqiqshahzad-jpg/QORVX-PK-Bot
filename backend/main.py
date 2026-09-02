@@ -625,6 +625,10 @@ def chat_completion_fallback(messages: list):
 # =========================================================================================
 # WEBHOOK ENDPOINTS & DISPATCHER
 # =========================================================================================
+@app.get('/')
+def root():
+    return PlainTextResponse(content="QORVX PK Bot is running!")
+
 @app.get('/webhook')
 def verify_webhook(request: Request):
     if request.query_params.get("hub.verify_token") == MY_VERIFY_TOKEN:
