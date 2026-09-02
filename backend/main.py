@@ -551,10 +551,6 @@ def extract_location(text: str, last_ai: str):
     PK_LOCS = ["dha", "bahria", "clifton", "gulberg", "johar", "blue area", "f-11", "f-10"]
     for loc in PK_LOCS:
         if loc in text.lower(): return loc.title()
-    
-    if len(text.split()) <= 3 and any(kw in last_ai.lower() for kw in ["location", "city", "area"]):
-        if not text.isdigit() and text.lower() not in ["buy", "rent", "yes", "no"]:
-            return text.title()
     return None
 
 # =========================================================================================
@@ -588,6 +584,7 @@ RULES:
 8. Q&A and Context: If `ACTIVE PROPERTY DETAILS` is provided, answer questions based ONLY on it.
 9. Disambiguation: If multiple properties were sent but no active property is selected, ask the user to clarify by replying to an image or typing the last 2 digits of the ID.
 10. Language & Tone: STRICTLY pure Pakistani Roman Urdu. NEVER be rude. Emojis: ALWAYS use relevant emojis! ✨
+11. Location Extraction: STRICTLY extract only the core city or area name for the `location` field (e.g. if user says "Lahore mein yaar", extract only "Lahore"). Never include extra conversational words.
 """
 
 def chat_completion_fallback(messages: list):
@@ -968,6 +965,19 @@ def process_whatsapp_data(data: dict):
                             ai_reply = parsed.get("reply_text", llm_res)
                     except Exception as parse_err:
                         logger.warning(f"⚠️ JSON parse failed: {parse_err}")
+                
+                # Safety check to prevent raw JSON from ever being sent
+                if ai_reply and (ai_reply.strip().startswith("{") or '"_thinking"' in ai_reply):
+                    import re
+                    match = re.search(r'"reply_text"\s*:\s*"([^"]+)"', ai_reply, re.DOTALL)
+                    if match:
+                        ai_reply = match.group(1).replace('\\n', '\n')
+                        try:
+                            ai_reply = ai_reply.encode().decode('unicode_escape')
+                        except:
+                            pass
+                    else:
+                        ai_reply = "Maazrat, system mein kuch technical error hai. Barae meharbani dobara try karein."
                 
                 chat_hist.append({"role": "user", "content": msg_body})
                 if ai_reply:
