@@ -969,7 +969,6 @@ def process_whatsapp_data(data: dict):
                 
                 # Safety check to prevent raw JSON from ever being sent
                 if ai_reply and (ai_reply.strip().startswith("{") or '"_thinking"' in ai_reply):
-                    import re
                     match = re.search(r'"reply_text"\s*:\s*"([^"]+)"', ai_reply, re.DOTALL)
                     if match:
                         ai_reply = match.group(1).replace('\\n', '\n')
