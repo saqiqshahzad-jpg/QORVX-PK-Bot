@@ -521,11 +521,11 @@ def execute_property_search(session, tenant_config, wa_token, from_number, tenan
             chat_hist.append({"role": "assistant", "content": msg})
         else:
             if sent_props:
-                fail_msg = "Janab aapki requirements ke mutabiq abhi yahi available hai jo main bhej chuka hu. Jese hi mazeed aayengi main update kar dunga!"
+                fail_msg = "Janab aapki requirements ke mutabiq abhi yahi available hain jo main bhej chuka hu. Kya aap mazeed options ke liye apni requirements (jaise budget ya location) tabdeel karna chahte hain?"
+                send_whatsapp_buttons(tenant_id, from_number, fail_msg, ["Change Req 🔄", "Main Menu 🏠"], wa_token)
             else:
-                fail_msg = "Filhal aapki in requirements ke mutabiq koi match nahi mila. Lekin humari team is par kaam kar rahi hai aur jald aapko update karegi! ⏳"
-            send_whatsapp_text(tenant_id, from_number, fail_msg, wa_token)
-            send_whatsapp_buttons(tenant_id, from_number, "Kya aap apni requirements tabdeel karna chahte hain?", ["Requirements Badlein 🔄", "Main Menu 🏠"], wa_token)
+                fail_msg = "Filhal in requirements ke mutabiq exact match nahi mila 🔎\n\nKya aap budget ya location thori badal kar check karna chahte hain? Taake main aapko milti julti behtareen properties dikha sakun 👇"
+                send_whatsapp_buttons(tenant_id, from_number, fail_msg, ["Change Req 🔄", "Main Menu 🏠"], wa_token)
             chat_hist.append({"role": "assistant", "content": fail_msg})
 
 # =========================================================================================
