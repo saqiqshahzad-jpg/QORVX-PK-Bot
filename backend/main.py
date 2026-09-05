@@ -1000,7 +1000,7 @@ def process_whatsapp_data(data: dict):
                                 execute_property_search(session, tenant_config, wa_token, from_number, tenant_id, chat_hist)
                                 ai_reply = ""
                             session["awaiting_confirmation"] = False
-                        elif parsed.get("intent") == "qa":
+                        elif parsed.get("intent") in ["qa", "visit"]:
                             ai_reply = parsed.get("reply_text", llm_res)
                         elif is_ready and not session.get("awaiting_confirmation"):
                             session["awaiting_confirmation"] = True
