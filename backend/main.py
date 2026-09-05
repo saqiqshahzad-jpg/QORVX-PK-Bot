@@ -308,7 +308,7 @@ class GoogleSheetCRM:
             logger.error(f"search_properties error: {e}", exc_info=True)
             return []
 
-    def search_similar_properties(self, location, property_type, purpose, exclude_ids):
+    def search_similar_properties(self, location, property_type, purpose, exclude_ids, budget=None):
         if not self.client: return None
         try:
             try:
@@ -329,6 +329,14 @@ class GoogleSheetCRM:
                 if location and location.lower() not in r_city and location.lower() not in r_society: continue
                 if property_type and property_type.lower() not in r_type: continue
                 if purpose and purpose.lower() not in r_purpose: continue
+                
+                if budget:
+                    prop_demand = r.get("Demand_PKR", 0)
+                    try:
+                        prop_demand = int(str(prop_demand).replace(",", ""))
+                        if prop_demand > budget * 1.30: continue # Allow max 30% margin for similar properties
+                    except:
+                        pass
                 
                 bhk_str = f"{r.get('BHK')} BHK " if r.get('BHK') else ""
                 size_str = f"{r.get('Size')} " if r.get('Size') else ""
@@ -494,7 +502,8 @@ def execute_property_search(session, tenant_config, wa_token, from_number, tenan
             location=session.get("location"),
             property_type=session.get("property_type"),
             purpose=session.get("purpose"),
-            exclude_ids=exclude_ids
+            exclude_ids=exclude_ids,
+            budget=session.get("budget")
         )
         
         if rec:
@@ -563,7 +572,7 @@ OUTPUT ONLY JSON.
 
 {
   "_thinking": "Internal logic",
-  "intent": "search" | "qa" | "confirm_change",
+  "intent": "search" | "qa" | "confirm_change" | "visit",
   "location": "string | null",
   "purpose": "buy" | "rent" | "sell" | null,
   "property_type": "house" | "flat" | "portion" | "plot" | "warehouse" | null,
@@ -588,6 +597,7 @@ RULES:
 10. Language & Tone: STRICTLY pure Pakistani Roman Urdu. NEVER be rude. Emojis: ALWAYS use relevant emojis! ✨
 11. Location Extraction: STRICTLY extract only the core city or area name for the `location` field (e.g. if user says "Lahore mein yaar", extract only "Lahore"). Never include extra conversational words.
 12. Property Type Question: When asking the user for the property type they are looking for, explicitly mention "Portion" in the options (e.g. "Ghar, Flat, Portion, ya Plot?").
+13. Visit Flow: If the user says they want to visit a property (e.g. "visit karna hai", "ghr visit krna hai", "dekhna hai"), set funnel_state to "AWAITING_VISIT_INFO" and intent to "visit". NEVER ask for date, time, or contact number. The bot only needs the user's NAME (phone number is already available from chat). If only one property was sent, the bot auto-selects it. If multiple were sent, bot asks for last 2 digits of property ID along with name.
 """
 
 def chat_completion_fallback(messages: list):
@@ -889,6 +899,30 @@ def process_whatsapp_data(data: dict):
                     return
 
                 # Intent shifts and confirmations are now handled purely by LLM and Button IDs
+
+                # Visit intent detection from free text (before LLM call)
+                visit_keywords = ["visit", "dekhna", "dekho", "dikhao ghar", "ghr visit", "property visit", "visit krna", "visit karna", "milna hai", "dekhnay", "ghar dekhna"]
+                if any(kw in msg_body.lower() for kw in visit_keywords) and session.get("sent_properties"):
+                    sent_props = session.get("sent_properties", [])
+                    session["state"] = "SCHEDULING_VISIT"
+                    session["funnel_state"] = "AWAITING_VISIT_INFO"
+                    
+                    if session.get("active_property"):
+                        ai_reply = f"Zabardast! Aap {session['active_property']} property visit karna chahte hain. Bas apna Pura Naam bata dein, main aapki details aage forward kar deta hu aur humari team jald aapse raabta karegi. 📝"
+                    elif len(sent_props) == 1:
+                        session["active_property"] = sent_props[0].get("ID")
+                        ai_reply = f"Zabardast! Aap {session['active_property']} property visit karna chahte hain. Bas apna Pura Naam bata dein, main aapki details aage forward kar deta hu aur humari team jald aapse raabta karegi. 📝"
+                    else:
+                        ai_reply = "Zabardast! Visit karne ke liye bas apna Pura Naam aur property ID ke aakhri 2 digits likh kar bhejein (ID property ke message ke aakhir mein likhi hoti hai). Main details forward kar dunga. 📝"
+                    
+                    send_whatsapp_text(tenant_id, from_number, ai_reply, wa_token)
+                    chat_hist.append({"role": "user", "content": msg_body})
+                    chat_hist.append({"role": "assistant", "content": ai_reply})
+                    session["chat_history"] = chat_hist[-50:]
+                    save_chat_history(from_number, tenant_id, "user", msg_body)
+                    save_chat_history(from_number, tenant_id, "assistant", ai_reply)
+                    save_user_session(from_number, tenant_id, session)
+                    return
 
                 # NLP Extraction
                 last_ai = chat_hist[-1]["content"] if chat_hist else ""
