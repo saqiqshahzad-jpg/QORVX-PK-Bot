@@ -593,8 +593,8 @@ RULES:
 6. Size/Bedrooms Rule: If "house", "flat" or "portion", you MUST ask for bedrooms (bhk). If "plot", "warehouse", or "zameen", you MUST ask for size.
 7. Unrelated Questions (e.g., Investment Plans): If the user asks for investment plans or anything not in your knowledge, politely reply: "Maazrat, ham abhi is mein kaam nhi krte, lekin agar aapko koi property kharidni, bechni ya rent par leni hai to main hazir hu."
 8. Q&A and Context: If `ACTIVE PROPERTY DETAILS` is provided, answer questions based ONLY on it.
-9. Disambiguation: If multiple properties were sent but no active property is selected, ask the user to clarify by replying to an image or typing the last 2 digits of the ID.
-10. Language & Tone: STRICTLY pure Pakistani Roman Urdu. NEVER be rude. Emojis: ALWAYS use relevant emojis! ✨
+9. Disambiguation: If multiple properties were sent but no active property is selected, ask the user to clarify by replying to an image or typing the last 2 digits of the ID (e.g. "Baraye meharbani aap kis property ki baat kar rahe hain? Image par reply karein ya ID ke aakhri 2 digits batayein").
+10. Language & Tone: STRICTLY pure Pakistani Roman Urdu. Do NOT use Hindi words like "Kripya", "Namaste", or "Dhanyawad". Use Urdu words like "Baraye meharbani", "Assalam o Alaikum", and "Shukriya". NEVER be rude. Emojis: ALWAYS use relevant emojis! ✨
 11. Location Extraction: STRICTLY extract only the core city or area name for the `location` field (e.g. if user says "Lahore mein yaar", extract only "Lahore"). Never include extra conversational words.
 12. Property Type Question: When asking the user for the property type they are looking for, explicitly mention "Portion" in the options (e.g. "Ghar, Flat, Portion, ya Plot?").
 13. Visit Flow: If the user says they want to visit a property (e.g. "visit karna hai", "ghr visit krna hai", "dekhna hai"), set funnel_state to "AWAITING_VISIT_INFO" and intent to "visit". NEVER ask for date, time, or contact number. The bot only needs the user's NAME (phone number is already available from chat). If only one property was sent, the bot auto-selects it. If multiple were sent, bot asks for last 2 digits of property ID along with name.
@@ -846,7 +846,7 @@ def process_whatsapp_data(data: dict):
                         session["search_confirmed"] = False
                         session["awaiting_confirmation"] = False
                         msg = "Behtareen, aapko koi aur option dikha deta hu. Bas ek cheez confirm kar dein, aap inhi requirements par mazeed options dekhna chahte hain ya requirements change karni hain?"
-                        send_whatsapp_buttons(tenant_id, from_number, msg, ["Inhi par dikhao 👁️", "Change karni hain 🔄"], wa_token)
+                        send_whatsapp_buttons(tenant_id, from_number, msg, ["Inhi par dikhao ✅", "Change karni hain 🔄"], wa_token)
                         chat_hist.append({"role": "user", "content": msg_body})
                         chat_hist.append({"role": "assistant", "content": msg})
                         session["chat_history"] = chat_hist[-50:]
@@ -863,7 +863,7 @@ def process_whatsapp_data(data: dict):
                     elif "badlo" in btn_id:
                         session["search_confirmed"] = False
                         session["awaiting_confirmation"] = False
-                        ai_reply = "Bilkul! Aap kya tabdeel karna chahte hain? 🔄 (Jaise: 'Budget 5 Crore' ya 'Location DHA')"
+                        ai_reply = "Bilkul! Aap kya tabdeel karna chahte hain? 🔄 (Jaise: 'Budget 5 Crore' ya 'Location DHA') ya kuch aur?"
                     elif btn_id.startswith("visit_") or "visit" in btn_id:
                         session["state"] = "SCHEDULING_VISIT"
                         session["funnel_state"] = "AWAITING_VISIT_INFO"
@@ -1042,7 +1042,7 @@ def process_whatsapp_data(data: dict):
               except Exception as fatal_err:
                 logger.error(f"💀 FATAL ERROR processing msg from {msg.get('from', 'unknown')}: {fatal_err}", exc_info=True)
                 try:
-                    send_whatsapp_text(tenant_id, msg.get('from', ''), "Maazrat! System mein thori si dikkat aa gayi. Dobara message bhejein.", wa_token)
+                    send_whatsapp_text(tenant_id, msg.get('from', ''), "Maazrat! System mein thori si problem aa gayi. Dobara message bhejein.", wa_token)
                 except:
                     logger.error("💀 Even fallback reply failed!")
 
