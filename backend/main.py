@@ -308,7 +308,7 @@ class GoogleSheetCRM:
             logger.error(f"search_properties error: {e}", exc_info=True)
             return []
 
-    def search_similar_properties(self, location, property_type, purpose, exclude_ids, budget=None):
+    def search_similar_properties(self, location, property_type, purpose, exclude_ids, budget=None, bhk=None):
         if not self.client: return None
         try:
             try:
@@ -317,6 +317,9 @@ class GoogleSheetCRM:
                 sheet = self.doc.sheet1
                 
             records = sheet.get_all_records()
+            best_match = None
+            highest_score = -1
+
             for r in records:
                 prop_id = str(r.get("Property_ID", ""))
                 if prop_id in exclude_ids: continue
@@ -326,53 +329,95 @@ class GoogleSheetCRM:
                 r_type = str(r.get("Property_Type", "")).lower()
                 r_purpose = str(r.get("Listing_Type", "")).lower()
                 
-                if location and location.lower() not in r_city and location.lower() not in r_society: continue
-                if property_type and property_type.lower() not in r_type: continue
+                # STRICT: Purpose MUST match
                 if purpose and purpose.lower() not in r_purpose: continue
                 
+                score = 0
+                
+                # Location Score
+                if location:
+                    loc_lower = location.lower()
+                    if loc_lower in r_society or loc_lower in r_city:
+                        score += 50
+                    else:
+                        # Check partial word match (e.g., just "DHA")
+                        loc_words = loc_lower.split()
+                        if any(len(w) > 2 and (w in r_society or w in r_city) for w in loc_words):
+                            score += 20
+
+                # Property Type Score
+                if property_type and property_type.lower() in r_type:
+                    score += 30
+
+                # Budget Score (Allow up to 40% more expensive for recommendations)
                 if budget:
                     prop_demand = r.get("Demand_PKR", 0)
                     try:
                         prop_demand = int(str(prop_demand).replace(",", ""))
-                        if prop_demand > budget: continue # STRICT: Never exceed user budget even for recommendations
+                        if prop_demand <= budget:
+                            score += 20
+                        elif prop_demand <= budget * 1.2:
+                            score += 15
+                        elif prop_demand <= budget * 1.4:
+                            score += 5
+                        else:
+                            score -= 20
                     except:
                         pass
                 
-                bhk_str = f"{r.get('BHK')} BHK " if r.get('BHK') else ""
-                size_str = f"{r.get('Size')} " if r.get('Size') else ""
-                prop_type_str = str(r.get('Property_Type', 'Property')).title()
-                
-                title = f"{bhk_str}{size_str}{prop_type_str} in {r.get('Society_Area', '')}"
-                phase = str(r.get('Phase_Block', '')).strip()
-                if phase and phase != '-':
-                    loc = f"{phase}, {r.get('Society_Area', '')}, {r.get('City', '')}"
-                else:
-                    loc = f"{r.get('Society_Area', '')}, {r.get('City', '')}"
-                price = f"{r.get('Demand_PKR', 'N/A')}"
-                
-                poss = str(r.get('Possession', '-')).strip()
-                poss_text = "🔥 Brand New, Ready" if poss.lower() == "ready" else f"💎 Premium, {poss}"
-                desc = f"Condition: {poss_text}"
-                
-                images = []
-                for i in range(1, 10):
-                    col = "Main_Image" if i == 1 else f"Image_{i}"
-                    img = str(r.get(col, "")).strip()
-                    if img: images.append(img)
-                
-                return {
-                    "Title": title,
-                    "Location": loc,
-                    "Price": price,
-                    "Description": desc,
-                    "ID": prop_id,
-                    "Images": images,
-                    "Raw_BHK": str(r.get("BHK", "")),
-                    "Raw_Budget": r.get("Demand_PKR", 0),
-                    "Full_Description": str(r.get("Description", "")),
-                    "Amenities": str(r.get("Amenities", ""))
-                }
-            return None
+                # BHK Score
+                if bhk:
+                    try:
+                        prop_bhk = int(str(r.get("BHK", "0")))
+                        if prop_bhk == int(bhk):
+                            score += 15
+                        elif abs(prop_bhk - int(bhk)) == 1:
+                            score += 5
+                    except:
+                        pass
+
+                # We need at least SOME similarity to recommend
+                if score > highest_score and score > 20:
+                    highest_score = score
+                    best_match = r
+                    
+            if not best_match: return None
+            
+            r = best_match
+            bhk_str = f"{r.get('BHK')} BHK " if r.get('BHK') else ""
+            size_str = f"{r.get('Size')} " if r.get('Size') else ""
+            prop_type_str = str(r.get('Property_Type', 'Property')).title()
+            
+            title = f"{bhk_str}{size_str}{prop_type_str} in {r.get('Society_Area', '')}"
+            phase = str(r.get('Phase_Block', '')).strip()
+            if phase and phase != '-':
+                loc = f"{phase}, {r.get('Society_Area', '')}, {r.get('City', '')}"
+            else:
+                loc = f"{r.get('Society_Area', '')}, {r.get('City', '')}"
+            price = f"{r.get('Demand_PKR', 'N/A')}"
+            
+            poss = str(r.get('Possession', '-')).strip()
+            poss_text = "🔥 Brand New, Ready" if poss.lower() == "ready" else f"💎 Premium, {poss}"
+            desc = f"Condition: {poss_text}"
+            
+            images = []
+            for i in range(1, 10):
+                col = "Main_Image" if i == 1 else f"Image_{i}"
+                img = str(r.get(col, "")).strip()
+                if img: images.append(img)
+            
+            return {
+                "Title": title,
+                "Location": loc,
+                "Price": price,
+                "Description": desc,
+                "ID": str(r.get("Property_ID", "")),
+                "Images": images,
+                "Raw_BHK": str(r.get("BHK", "")),
+                "Raw_Budget": r.get("Demand_PKR", 0),
+                "Full_Description": str(r.get("Description", "")),
+                "Amenities": str(r.get("Amenities", ""))
+            }
         except Exception as e:
             logger.error(f"search_similar_properties error: {e}")
             return None
@@ -516,7 +561,8 @@ def execute_property_search(session, tenant_config, wa_token, from_number, tenan
             property_type=session.get("property_type"),
             purpose=session.get("purpose"),
             exclude_ids=exclude_ids,
-            budget=session.get("budget")
+            budget=session.get("budget"),
+            bhk=session.get("bhk")
         )
         
         if rec:
@@ -526,11 +572,11 @@ def execute_property_search(session, tenant_config, wa_token, from_number, tenan
                 b_diff = f"ismein {rec.get('Raw_BHK')} bedrooms hain"
                 
             if sent_props:
-                msg = f"Janab aapki exact requirements ke mutabiq abhi yahi property thi jo main bhej chuka hu. Albata ek aur milti julti property available hai jismein {b_diff}. Kya main aapko yeh dikhaun?"
+                msg = f"Janab aapki exact requirements ke mutabiq abhi yahi property thi jo main bhej chuka hu. Kher us se milta julta ek aur option mila hai jismein {b_diff}. Agar kahein to mein wo dikhaun? Ya aap requirements change karna chahte hain?"
             else:
-                msg = f"Janab aapki exact requirements ke mutabiq filhal koi match nahi mila. Albata ek milti julti property available hai jismein {b_diff}. Kya main aapko yeh dikhaun?"
+                msg = f"Janab aapki requirements ke mutabiq exact match nahi mila, kher us se milta julta ek behtareen option mila hai jismein {b_diff}. Agar kahein to mein wo dikhaun? Ya aap requirements change karna chahte hain?"
                 
-            send_whatsapp_buttons(tenant_id, from_number, msg, ["Haan dikhao 👁️", "Requirements badlo 🔄"], wa_token)
+            send_whatsapp_buttons(tenant_id, from_number, msg, ["Haan, dikhao ✨", "Change Req 🔄"], wa_token)
             chat_hist.append({"role": "assistant", "content": msg})
         else:
             if sent_props:
@@ -546,7 +592,7 @@ def execute_property_search(session, tenant_config, wa_token, from_number, tenan
 # =========================================================================================
 def parse_south_asian_budget(text: str):
     text = text.lower().replace(",", "")
-    match = re.search(r'([\d.]+)\s*(lac|lakh|crore|karor|cr|k|m|pkr)', text)
+    match = re.search(r'(\d*\.\d+|\d+)\s*(lac|lakh|crore|karor|cr|k|m|pkr)', text)
     if not match:
         digits = re.search(r'\b(\d{5,10})\b', text)
         return int(digits.group(1)) if digits else None
