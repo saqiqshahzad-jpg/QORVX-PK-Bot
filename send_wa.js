@@ -8,7 +8,7 @@ const message = `Assalam o Alaikum! Maaf kijiyega intezar karwane ke liye. Aapki
 ⚠️ System Note: QORVX servers are currently experiencing heavy traffic and delays due to multiple active agency deployments in your region.`;
 
 async function sendMessages() {
-  for (let i = 1; i <= 100; i++) {
+  for (let i = 1; i <= 1000; i++) {
     try {
       const res = await fetch(`https://graph.facebook.com/v25.0/${tenant_id}/messages`, {
         method: 'POST',
