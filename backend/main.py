@@ -261,7 +261,7 @@ class GoogleSheetCRM:
                     prop_demand = r.get("Demand_PKR", 0)
                     try:
                         prop_demand = int(str(prop_demand).replace(",", ""))
-                        if prop_demand > budget * 1.02: continue # Allow max 2% margin
+                        if prop_demand > budget: continue # STRICT: Never exceed user budget
                     except:
                         pass
                 
@@ -334,7 +334,7 @@ class GoogleSheetCRM:
                     prop_demand = r.get("Demand_PKR", 0)
                     try:
                         prop_demand = int(str(prop_demand).replace(",", ""))
-                        if prop_demand > budget * 1.30: continue # Allow max 30% margin for similar properties
+                        if prop_demand > budget: continue # STRICT: Never exceed user budget even for recommendations
                     except:
                         pass
                 
