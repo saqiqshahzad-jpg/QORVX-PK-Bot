@@ -25,6 +25,7 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 WHATSAPP_API_VERSION = "v25.0"
 
 groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
@@ -661,39 +662,118 @@ RULES:
 15. ONE QUESTION AT A TIME: NEVER ask multiple questions in a single message. Do NOT use bullet points or numbered lists like "1. ... 2. ...". If multiple requirements are missing, pick ONLY ONE requirement to ask about in a friendly, conversational manner. Asking multiple questions at once is STRICTLY PROHIBITED.
 """
 
-def chat_completion_fallback(messages: list):
-    try:
-        # Try Gemini (assuming OpenAI compatible endpoint or google genai)
-        res = requests.post(f"https://generativelanguage.googleapis.com/v1beta/openai/chat/completions?key={GEMINI_API_KEY}", json={"model": "gemini-3.6-flash", "messages": messages, "temperature": 0.4}, timeout=15)
-        if res.status_code == 200: return res.json()["choices"][0]["message"]["content"]
-    except Exception as e: 
-        logger.warning(f"Gemini skipped: {e}")
+def _trim_messages(messages: list, max_history: int = 10, max_content_len: int = 800) -> list:
+    """Trim messages to avoid 413 Payload Too Large errors."""
+    trimmed = []
+    for m in messages:
+        role = m.get("role", "")
+        content = m.get("content", "")
+        # Always keep system prompt in full
+        if role == "system":
+            trimmed.append({"role": role, "content": content})
+        else:
+            # Truncate long messages
+            if len(content) > max_content_len:
+                content = content[:max_content_len] + "...[trimmed]"
+            trimmed.append({"role": role, "content": content})
     
+    # Keep system prompt + last N history + final user message
+    system = [m for m in trimmed if m["role"] == "system"]
+    non_system = [m for m in trimmed if m["role"] != "system"]
+    # Always keep last user message
+    if non_system:
+        last = non_system[-1:]
+        history = non_system[:-1][-(max_history):]
+        return system + history + last
+    return system + non_system
+
+
+def chat_completion_fallback(messages: list):
+    # Trim context to prevent 413 errors on all providers
+    messages = _trim_messages(messages)
+    
+    # -------------------------------------------------------
+    # TIER 1: Groq — verified free model IDs (Sept 2025)
+    # -------------------------------------------------------
     if groq_client:
-        # List of free Groq models to try one by one
         groq_models = [
-            "qwen/qwen3.8-27b",
-            "openai/gpt-oss-120b",
-            "qwen/qwen3.6-27b",
-            "openai/gpt-oss-20b",
-            "groq/compound"
+            "llama-3.1-8b-instant",      # Fast, reliable, always free
+            "llama-3.3-70b-versatile",   # Smarter, still free tier
+            "openai/gpt-oss-20b",         # OpenAI OSS via Groq
+            "qwen/qwen3.8-27b",           # Qwen 3.8 27B via Groq
+            "openai/gpt-oss-120b",        # Larger OSS model
         ]
-        
         for model_name in groq_models:
             try:
-                logger.info(f"🤖 Trying Groq model: {model_name}")
-                comp = groq_client.chat.completions.create(model=model_name, messages=messages, temperature=0.4)
+                logger.info(f"🤖 [TIER1-Groq] Trying: {model_name}")
+                comp = groq_client.chat.completions.create(
+                    model=model_name,
+                    messages=messages,
+                    temperature=0.4
+                )
                 return comp.choices[0].message.content
             except Exception as e:
-                err_msg = str(e)
-                if hasattr(e, 'response'):
-                    err_msg += f" - {e.response.text}"
-                logger.warning(f"⚠️ Groq model '{model_name}' failed: {err_msg}")
+                logger.warning(f"⚠️ Groq '{model_name}' failed: {str(e)[:120]}")
                 continue
-                
-        logger.error("❌ All Groq models failed!")
+        logger.error("❌ All Groq models failed! Moving to Tier 2...")
     
+    # -------------------------------------------------------
+    # TIER 2: OpenRouter — free models (suffix :free)
+    # -------------------------------------------------------
+    if OPENROUTER_API_KEY:
+        or_models = [
+            "meta-llama/llama-3.1-8b-instruct:free",
+            "google/gemma-4-31b-it:free",
+            "nvidia/nemotron-3.5-lightning:free",
+            "minimax/minimax-m2.7:free",
+            "openrouter/free",  # Auto-router: picks any available free model
+        ]
+        for model_name in or_models:
+            try:
+                logger.info(f"🔀 [TIER2-OpenRouter] Trying: {model_name}")
+                res = requests.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                        "HTTP-Referer": "https://qorvx.com",
+                        "X-Title": "QORVX PK Bot",
+                        "Content-Type": "application/json"
+                    },
+                    json={"model": model_name, "messages": messages, "temperature": 0.4},
+                    timeout=20
+                )
+                if res.status_code == 200:
+                    content = res.json()["choices"][0]["message"]["content"]
+                    if content:
+                        return content
+                else:
+                    logger.warning(f"⚠️ OpenRouter '{model_name}': {res.status_code} {res.text[:120]}")
+            except Exception as e:
+                logger.warning(f"⚠️ OpenRouter '{model_name}' failed: {str(e)[:120]}")
+                continue
+        logger.error("❌ All OpenRouter models failed! Moving to Tier 3...")
+
+    # -------------------------------------------------------
+    # TIER 3 (LAST RESORT): Gemini 3.6 Flash
+    # -------------------------------------------------------
+    if GEMINI_API_KEY:
+        try:
+            logger.info("🔄 [TIER3-Gemini] Falling back to gemini-3.6-flash...")
+            res = requests.post(
+                f"https://generativelanguage.googleapis.com/v1beta/openai/chat/completions?key={GEMINI_API_KEY}",
+                json={"model": "gemini-3.6-flash", "messages": messages, "temperature": 0.4},
+                timeout=20
+            )
+            if res.status_code == 200:
+                return res.json()["choices"][0]["message"]["content"]
+            else:
+                logger.warning(f"⚠️ Gemini 3.6 Flash failed: {res.status_code} {res.text[:200]}")
+        except Exception as e:
+            logger.warning(f"⚠️ Gemini fallback exception: {e}")
+    
+    logger.error("❌ ALL 3 TIERS FAILED!")
     return "Janab, system par is waqt thora load hai... 10 second baad dobara bhejein."
+
 
 # =========================================================================================
 # WEBHOOK ENDPOINTS & DISPATCHER
@@ -1058,7 +1138,7 @@ def process_whatsapp_data(data: dict):
                 logger.info(f"🤖 Calling LLM for {from_number}...")
                 sys_prompt = PK_MASTER_PROMPT + sys_add
                 messages = [{"role": "system", "content": sys_prompt}]
-                messages.extend(chat_hist[-40:])
+                messages.extend(chat_hist[-10:])  # Last 10 messages to avoid 413
                 messages.append({"role": "user", "content": msg_body})
                 
                 llm_res = chat_completion_fallback(messages)
@@ -1131,6 +1211,49 @@ def process_whatsapp_data(data: dict):
                             pass
                     else:
                         ai_reply = "Maazrat, system mein kuch technical error hai. Barae meharbani dobara try karein."
+                
+                # =================================================================
+                # PLAN C: Post-LLM Output Validator
+                # Even if LLM slips through Plans A & B, scan the FINAL reply
+                # before it ever reaches the user.
+                # =================================================================
+                if ai_reply:
+                    REPLY_DANGER_SIGNALS = [
+                        "```",          # code block
+                        "def ",         # python function
+                        "import ",      # python import
+                        "SELECT ",      # SQL
+                        "function(",    # JS
+                        "<html",        # HTML
+                        "Here is a recipe",
+                        "Here's a recipe",
+                        "The capital of",
+                        "According to Wikipedia",
+                        "World War",
+                        "Albert Einstein",
+                        "As an AI",
+                        "As a language model",
+                        "I am ChatGPT",
+                        "I am an AI",
+                        "I'm an AI",
+                        "I'm ChatGPT",
+                    ]
+                    REPLY_PROPERTY_SIGNALS = [
+                        "property", "ghar", "makan", "flat", "plot", "portion",
+                        "bahria", "dha", "rent", "khareedna", "bechna", "kharidna",
+                        "location", "budget", "bedroom", "crore", "lakh", "marla",
+                        "kanal", "visit", "listing", "property_type", "shehar", "area",
+                        "qemat", "kiraya", "bhk", "villa", "apartment"
+                    ]
+                    
+                    reply_lower = ai_reply.lower()
+                    has_danger = any(sig.lower() in reply_lower for sig in REPLY_DANGER_SIGNALS)
+                    has_property_signal = any(sig in reply_lower for sig in REPLY_PROPERTY_SIGNALS)
+                    
+                    if has_danger and not has_property_signal:
+                        logger.warning(f"🛡️ PLAN C caught suspicious LLM reply for {from_number}: '{ai_reply[:80]}'")
+                        ai_reply = "Janab, main ek Real Estate advisor hoon. Main sirf properties kharidne, bechne, ya rent par lene ke hawale se aapki madad kar sakta hoon. Agar property se mutaliq koi sawal hai to batayein, warna main is hawale se madad nahi kar paunga. 🏠"
+                # =================================================================
                 
                 chat_hist.append({"role": "user", "content": msg_body})
                 if ai_reply:
