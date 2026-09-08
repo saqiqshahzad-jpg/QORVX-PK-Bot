@@ -193,7 +193,7 @@ def download_audio_and_transcribe(audio_id: str, token: str):
 # PROFANITY FILTER
 # =========================================================================================
 URDU_ABUSES = [
-    "kutte", "kutta", "suar", "haramkhor", "harami", "gaandu", "gand",
+    "kutte", "kutta", "kuttay", "kuttwy", "kutty", "suar", "haramkhor", "harami", "gaandu", "gand",
     "ullu", "bewakoof", "gadha", "saala", "haramzada", "kamina", "kameena",
     "chutiya", "bhenchod", "madarchod", "bhosdike", "mc", "bc", "lund",
     "randi", "kutiya", "bhosdi", "benchod", "maderchod", "behen", "chod",
@@ -1418,7 +1418,19 @@ def process_whatsapp_data(data: dict):
                 # ─────────────────────────────────────────────────────────────────
 
                 # NLP Extraction — also strip profanity from typed text
-                msg_body_clean, _ = sanitize_and_extract(msg_body)
+                msg_body_clean, had_abuses = sanitize_and_extract(msg_body)
+                
+                if had_abuses:
+                    warning_msg = "Janab, baraye meharbani munasib alfaz ka istemal karein. Main ek Real Estate assistant hoon, agar aapko property se mutaliq koi madad chahiye to batayein, warna main is hawale se madad nahi kar paunga."
+                    send_whatsapp_text(tenant_id, from_number, warning_msg, wa_token)
+                    chat_hist.append({"role": "user", "content": msg_body})
+                    chat_hist.append({"role": "assistant", "content": warning_msg})
+                    session["chat_history"] = chat_hist[-50:]
+                    save_chat_history(from_number, tenant_id, "user", msg_body)
+                    save_chat_history(from_number, tenant_id, "assistant", warning_msg)
+                    save_user_session(from_number, tenant_id, session)
+                    return
+
                 if msg_body_clean:
                     msg_body = msg_body_clean
 
