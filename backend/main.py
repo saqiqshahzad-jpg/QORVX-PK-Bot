@@ -703,23 +703,954 @@ def extract_bhk(text: str, prop_type: str, last_ai: str):
 
 # Karachi areas that the bot recognizes
 KARACHI_AREAS = [
-    "dha", "defence", "bahria", "bahria town", "clifton", "gulberg", "johar",
-    "gulshan", "gulshan-e-iqbal", "gulshan e iqbal", "north nazimabad", "nazimabad",
-    "pechs", "pech", "fb area", "federal b area", "malir", "malir cantt",
-    "scheme 33", "surjani", "surjani town", "korangi", "landhi", "saddar",
-    "defence view", "tariq road", "bahadurabad", "shahrah-e-faisal", "shahrah e faisal",
-    "north karachi", "new karachi", "buffer zone", "safoora", "safoora goth",
-    "steel town", "bin qasim", "port qasim", "lyari", "garden", "guru mandir",
-    "liaquatabad", "hussainabad", "orangi", "orangi town", "site", "baldia",
-    "kemari", "shah faisal", "model colony", "gulistan-e-johar", "gulistan e johar",
-    "askari", "navy housing", "falcon complex", "cantt", "karachi cantt",
+    # ===================== DHA / DEFENCE =====================
+    "dha", "defence", "dha phase 1", "dha phase 2", "dha phase 2 extension",
+    "dha phase 3", "dha phase 4", "dha phase 5", "dha phase 6",
+    "dha phase 7", "dha phase 7 extension", "dha phase 8",
+    "dha phase 8 extension", "dha city", "dha city karachi",
+    "defence view", "defence view society",
     "phase 1", "phase 2", "phase 3", "phase 4", "phase 5", "phase 6", "phase 7", "phase 8",
-    "sea view", "seaview", "do darya", "boat basin", "zamzama", "karsaz",
-    "shahra-e-quaideen", "university road", "hassan square", "al azam square",
-    "nipa", "numaish", "tower", "shaheed e millat", "kaechs", "smchs",
-    "mehmoodabad", "jamshed town", "jamshed road", "anda mor", "five star",
+    "khayaban-e-shahbaz", "khayaban e shahbaz",
+    "khayaban-e-tanzeem", "khayaban e tanzeem",
+    "khayaban-e-rahat", "khayaban e rahat",
+    "khayaban-e-mujahid", "khayaban e mujahid",
+    "khayaban-e-hafiz", "khayaban e hafiz",
+    "khayaban-e-ittehad", "khayaban e ittehad",
+    "khayaban-e-bukhari", "khayaban e bukhari",
+    "khayaban-e-badban", "khayaban e badban",
+    "khayaban-e-muhafiz", "khayaban e muhafiz",
+    "khayaban-e-jami", "khayaban e jami",
+    "khayaban-e-shujaat", "khayaban e shujaat",
+    "khayaban-e-hilal", "khayaban e hilal",
+    "sunset boulevard", "creek vista", "emaar crescent bay", "emaar",
+    "creek avenue", "creek vistas",
+
+    # ===================== CLIFTON =====================
+    "clifton", "clifton block 1", "clifton block 2", "clifton block 3",
+    "clifton block 4", "clifton block 5", "clifton block 6", "clifton block 7",
+    "clifton block 8", "clifton block 9",
+    "sea view", "seaview", "do darya", "boat basin", "zamzama",
+    "ocean mall", "dolmen mall clifton", "park towers",
+    "bath island", "civil lines",
+
+    # ===================== BAHRIA TOWN =====================
+    "bahria", "bahria town", "bahria town karachi",
+    "bahria town precinct 1", "bahria town precinct 2", "bahria town precinct 3",
+    "bahria town precinct 4", "bahria town precinct 5", "bahria town precinct 6",
+    "bahria town precinct 7", "bahria town precinct 8", "bahria town precinct 9",
+    "bahria town precinct 10", "bahria town precinct 10a", "bahria town precinct 10b",
+    "bahria town precinct 11", "bahria town precinct 11a", "bahria town precinct 11b",
+    "bahria town precinct 12", "bahria town precinct 14",
+    "bahria town precinct 15", "bahria town precinct 15a", "bahria town precinct 15b",
+    "bahria town precinct 16", "bahria town precinct 17",
+    "bahria town precinct 18", "bahria town precinct 19",
+    "bahria town precinct 25", "bahria town precinct 26",
+    "bahria town precinct 27", "bahria town precinct 28",
+    "bahria town precinct 29", "bahria town precinct 30",
+    "bahria town precinct 31", "bahria paradise", "bahria heights",
+    "bahria sports city", "bahria golf city",
+
+    # ===================== GULSHAN-E-IQBAL =====================
+    "gulshan", "gulshan-e-iqbal", "gulshan e iqbal",
+    "gulshan block 1", "gulshan block 2", "gulshan block 3",
+    "gulshan block 4", "gulshan block 5", "gulshan block 6",
+    "gulshan block 7", "gulshan block 8", "gulshan block 9",
+    "gulshan block 10", "gulshan block 10a", "gulshan block 11",
+    "gulshan block 12", "gulshan block 13", "gulshan block 14",
+    "gulshan block 15", "gulshan block 16",
+    "rashid minhas road", "abul hasan isphahani road",
+    "johar mor", "johar chowrangi",
+
+    # ===================== GULISTAN-E-JOHAR =====================
+    "johar", "gulistan-e-johar", "gulistan e johar",
+    "johar block 1", "johar block 2", "johar block 3",
+    "johar block 4", "johar block 5", "johar block 6",
+    "johar block 7", "johar block 8", "johar block 9",
+    "johar block 10", "johar block 11", "johar block 12",
+    "johar block 13", "johar block 14", "johar block 15",
+    "johar block 16", "johar block 17", "johar block 18", "johar block 19",
+    "pehlwan goth",
+
+    # ===================== NORTH NAZIMABAD =====================
+    "north nazimabad", "north nazimabad block a", "north nazimabad block b",
+    "north nazimabad block c", "north nazimabad block d",
+    "north nazimabad block e", "north nazimabad block f",
+    "north nazimabad block g", "north nazimabad block h",
+    "north nazimabad block i", "north nazimabad block j",
+    "north nazimabad block k", "north nazimabad block l",
+    "north nazimabad block m", "north nazimabad block n",
+    "north nazimabad block r", "north nazimabad block s",
+    "north nazimabad block t",
+    "hyderi", "hyderi market",
+
+    # ===================== NAZIMABAD =====================
+    "nazimabad", "nazimabad no 1", "nazimabad no 2", "nazimabad no 3",
+    "nazimabad no 4", "nazimabad no 5",
+    "mazar-e-quaid", "mazar e quaid",
+
+    # ===================== GULBERG =====================
+    "gulberg", "gulberg town", "gulberg greens",
+
+    # ===================== PECHS / SMCHS / KAECHS =====================
+    "pechs", "pech", "pechs block 1", "pechs block 2", "pechs block 3",
+    "pechs block 6",
+    "smchs", "smch society",
+    "kaechs", "kaech society",
+    "monno saleem society",
+
+    # ===================== FB AREA / FEDERAL B AREA =====================
+    "fb area", "federal b area", "federal b industrial area",
+    "fb area block 1", "fb area block 2", "fb area block 3",
+    "fb area block 4", "fb area block 5", "fb area block 6",
+    "fb area block 7", "fb area block 8", "fb area block 9",
+    "fb area block 10", "fb area block 11", "fb area block 12",
+    "fb area block 13", "fb area block 14", "fb area block 15",
+    "fb area block 16", "fb area block 17", "fb area block 18",
+    "fb area block 19", "fb area block 20",
+    "ancholi", "aisha manzil", "aisha bawani",
+    "karimabad", "dastagir",
+
+    # ===================== NORTH KARACHI =====================
+    "north karachi", "north karachi sector 5a", "north karachi sector 5b",
+    "north karachi sector 5c", "north karachi sector 5d",
+    "north karachi sector 5e", "north karachi sector 5f",
+    "north karachi sector 5g", "north karachi sector 5h",
+    "north karachi sector 5i", "north karachi sector 5j",
+    "north karachi sector 5k", "north karachi sector 5l",
+    "north karachi sector 7", "north karachi sector 8",
+    "north karachi sector 9", "north karachi sector 10",
+    "north karachi sector 11a", "north karachi sector 11b",
+    "north karachi sector 11c", "north karachi sector 11e",
+    "north karachi sector 14a", "north karachi sector 14b",
+    "north karachi power house",
+    "4k chowrangi", "nagan chowrangi",
+
+    # ===================== NEW KARACHI =====================
+    "new karachi", "new karachi sector 1", "new karachi sector 2",
+    "new karachi sector 3", "new karachi sector 4", "new karachi sector 5",
+
+    # ===================== BUFFER ZONE =====================
+    "buffer zone", "buffer zone sector 15-a", "buffer zone north",
+
+    # ===================== SCHEME 33 =====================
+    "scheme 33", "scheme 33 sector 17-a", "scheme 33 sector 18",
+    "scheme 33 sector 19", "scheme 33 sector 20",
+    "scheme 33 sector 21", "scheme 33 sector 22",
+    "scheme 33 sector 23", "scheme 33 sector 24",
+    "scheme 33 sector 34", "scheme 33 sector 35",
+    "scheme 33 sector 36", "scheme 33 sector 37",
+    "scheme 33 sector 38", "scheme 33 sector 39",
+    "scheme 33 sector 40", "scheme 33 sector 41",
+    "scheme 33 sector 42", "scheme 33 sector 43",
+    "scheme 33 sector 44", "scheme 33 sector 46",
+    "scheme 33 sector 51", "scheme 33 sector 52",
+    "scheme 33 sector 53", "scheme 33 sector 54",
+
+    # ===================== SAFOORA / SAFOORA GOTH =====================
+    "safoora", "safoora goth", "safoora chowrangi", "safoora chorangi",
+
+    # ===================== SURJANI TOWN =====================
+    "surjani", "surjani town", "surjani sector 1", "surjani sector 2",
+    "surjani sector 3", "surjani sector 4", "surjani sector 5",
+    "surjani sector 6", "surjani sector 7", "surjani sector 8",
+
+    # ===================== SADDAR =====================
+    "saddar", "saddar town", "empress market", "zainab market",
+    "zaib un nissa street", "preedy street", "elphinstone street",
+    "i.i. chundrigar road", "i i chundrigar road", "ii chundrigar",
+    "mcleod road", "victoria road",
+
+    # ===================== TARIQ ROAD / BAHADURABAD =====================
+    "tariq road", "bahadurabad", "tariq bin ziyad society",
+    "aga khan hospital area", "stadium road",
+
+    # ===================== SHAHRAH-E-FAISAL =====================
+    "shahrah-e-faisal", "shahrah e faisal", "shahra e faisal",
+    "karsaz", "karsaz road",
+    "shaheed e millat", "shaheed-e-millat", "shaheed e millat road",
+    "drigh road", "drigh colony",
+
+    # ===================== SHAH FAISAL TOWN / MODEL COLONY =====================
+    "shah faisal", "shah faisal town", "shah faisal colony",
+    "model colony", "model colony malir",
+
+    # ===================== MALIR =====================
+    "malir", "malir cantt", "malir cantonment", "malir halt",
+    "malir city", "malir kala board", "malir 15 no",
+    "malir extension", "jinnah avenue malir",
+    "falcon complex", "falcon complex new malir",
+    "nature garden", "nature city",
+
+    # ===================== KORANGI =====================
+    "korangi", "korangi industrial area", "korangi crossing",
+    "korangi sector 31-g", "korangi sector 33",
+    "korangi sector 34", "korangi sector 35",
+    "korangi no 1", "korangi no 2", "korangi no 3",
+    "korangi no 4", "korangi no 5", "korangi no 6",
+    "korangi creek", "korangi road",
+    "zaman town", "nasir colony", "bilal colony korangi",
+
+    # ===================== LANDHI =====================
+    "landhi", "landhi no 1", "landhi no 2", "landhi no 3",
+    "landhi no 4", "landhi no 5", "landhi no 6",
+    "landhi industrial area", "landhi town",
+    "quaidabad", "quaid e abad",
+    "shershah", "dawood chowrangi",
+
+    # ===================== BIN QASIM / PORT QASIM =====================
+    "bin qasim", "bin qasim town", "port qasim", "port qasim authority",
+    "port qasim industrial area",
+
+    # ===================== STEEL TOWN =====================
+    "steel town", "pakistan steel",
+
+    # ===================== LYARI =====================
+    "lyari", "lyari town", "chakiwara", "agra taj colony",
+    "baghdadi", "kalakot", "kalri", "lea market",
+    "old golimar", "rangiwara", "shah baig lane",
+
+    # ===================== GARDEN =====================
+    "garden", "garden east", "garden west",
+    "jacob lines", "parsi colony",
+    "jail road", "jail chowrangi",
+
+    # ===================== GURU MANDIR / SOLDIER BAZAAR =====================
+    "guru mandir", "soldier bazaar", "soldier bazar",
+    "pakistan chowk", "tibet centre",
+
+    # ===================== LIAQUATABAD =====================
+    "liaquatabad", "liaquatabad no 1", "liaquatabad no 2",
+    "liaquatabad no 3", "liaquatabad no 4", "liaquatabad no 5",
+    "liaquatabad no 6", "liaquatabad no 7", "liaquatabad no 8",
+    "liaquatabad no 9", "liaquatabad no 10",
+    "super market liaquatabad",
+
+    # ===================== HUSSAINABAD =====================
+    "hussainabad",
+
+    # ===================== ORANGI TOWN =====================
+    "orangi", "orangi town", "orangi sector 1", "orangi sector 2",
+    "orangi sector 3", "orangi sector 4", "orangi sector 5",
+    "orangi sector 6", "orangi sector 7", "orangi sector 8",
+    "orangi sector 9", "orangi sector 10", "orangi sector 11",
+    "orangi sector 11-1/2", "orangi sector 12", "orangi sector 13",
+    "orangi sector 14",
+    "zia ul haq colony orangi",
+
+    # ===================== SITE AREA =====================
+    "site", "site area", "site town",
+    "metroville", "metroville block 1", "metroville block 2",
+    "metroville block 3",
+
+    # ===================== BALDIA TOWN =====================
+    "baldia", "baldia town", "baldia sector 1", "baldia sector 2",
+    "baldia sector 3", "baldia sector 4", "baldia sector 5",
+    "ittehad town",
+
+    # ===================== KEMARI =====================
+    "kemari", "keamari", "kemari town",
+    "hawkes bay", "hawks bay", "sandspit",
+    "mauripur", "baba island",
+
+    # ===================== ASKARI / MILITARY =====================
+    "askari", "askari 1", "askari 2", "askari 3", "askari 4", "askari 5",
+    "navy housing", "navy housing scheme",
+    "navy housing scheme zamzama",
+    "pakistan navy housing scheme",
+    "air force housing", "air force housing scheme",
+    "paf housing scheme",
+    "cantt", "karachi cantt", "karachi cantonment",
+    "malir cantt bazar",
+    "faisal cantt",
+    "army housing scheme",
+    "chapal suncity",
+
+    # ===================== MEHMOODABAD =====================
+    "mehmoodabad", "mehmoodabad no 1", "mehmoodabad no 2",
+    "mehmoodabad no 3", "mehmoodabad no 4",
+    "mehmoodabad no 5", "mehmoodabad no 6",
+
+    # ===================== JAMSHED TOWN =====================
+    "jamshed town", "jamshed road",
+    "jamshed quarters", "teen hatti",
+    "patel para",
+
+    # ===================== NIPA / NUMAISH / UNIVERSITY ROAD =====================
+    "nipa", "nipa chowrangi",
+    "numaish", "numaish chowrangi",
+    "tower", "tower area",
+    "university road", "karachi university",
+    "ned university",
+
+    # ===================== SHAHRA-E-QUAIDEEN =====================
+    "shahra-e-quaideen", "shahra e quaideen",
+    "hassan square", "al azam square", "al azam",
+
+    # ===================== SUPER HIGHWAY / M9 / NATIONAL HIGHWAY =====================
     "super highway", "m9", "national highway",
+    "superhighway", "m9 motorway",
+    "kathore", "thano ahmed khan",
+
+    # ===================== FIVE STAR / ANDA MOR =====================
+    "five star", "five star chowrangi",
+    "anda mor", "anda more",
+    "power house chowrangi",
+
+    # ===================== GULZAR-E-HIJRI =====================
+    "gulzar-e-hijri", "gulzar e hijri", "gulzar hijri",
+
+    # ===================== SHAH LATIF TOWN =====================
+    "shah latif", "shah latif town",
+    "shah latif sector 14", "shah latif sector 15",
+    "shah latif sector 16", "shah latif sector 17",
+    "shah latif sector 18", "shah latif sector 19",
+
+    # ===================== GADAP TOWN =====================
+    "gadap", "gadap town", "gadap city",
+    "deh murad memon goth", "murad memon goth",
+    "songal", "manghopir", "mangho pir",
+
+    # ===================== PIPRI =====================
+    "pipri", "pipri marshes",
+
+    # ===================== GHAGHAR PHATAK =====================
+    "ghaghar phatak", "ghagar phatak",
+
+    # ===================== QAYYUMABAD =====================
+    "qayyumabad",
+
+    # ===================== AZIZABAD =====================
+    "azizabad",
+
+    # ===================== PIB COLONY / MARTIN QUARTERS =====================
+    "pib colony", "pib", "martin quarters", "martin road",
+
+    # ===================== AKHTAR COLONY =====================
+    "akhtar colony",
+
+    # ===================== CHANESAR GOTH =====================
+    "chanesar goth", "chanesar town",
+
+    # ===================== MOMINABAD =====================
+    "mominabad",
+
+    # ===================== LANDI KOTAL CHOWK =====================
+    "landi kotal chowk",
+
+    # ===================== GULSHAN-E-MAYMAR =====================
+    "gulshan-e-maymar", "gulshan e maymar", "maymar",
+    "maymar sector x", "maymar sector y", "maymar sector z",
+
+    # ===================== AHSANABAD =====================
+    "ahsanabad",
+
+    # ===================== SHAH FAISAL COLONY =====================
+    "shah faisal colony 1", "shah faisal colony 2", "shah faisal colony 3",
+
+    # ===================== CLIFTON CANTONMENT =====================
+    "clifton cantonment",
+
+    # ===================== PAKISTAN QUARTERS / ESSA NAGRI =====================
+    "pakistan quarters", "essa nagri",
+
+    # ===================== BHAINS COLONY =====================
+    "bhains colony",
+
+    # ===================== MUSHARRAF COLONY =====================
+    "musharraf colony",
+
+    # ===================== SACHAL GOTH =====================
+    "sachal goth", "sachal",
+
+    # ===================== IBRAHIM HYDERI =====================
+    "ibrahim hyderi", "ibrahim haideri",
+
+    # ===================== CATTLE COLONY =====================
+    "cattle colony",
+
+    # ===================== MOHAMMAD ALI SOCIETY =====================
+    "mohammad ali society", "muhammad ali society",
+
+    # ===================== SOCIETY AREAS =====================
+    "al-falah society", "al falah society",
+    "al-noor society", "al noor society",
+    "abul hasan isphahani society",
+    "iqbal society", "memon society",
+    "teachers society", "teachers cooperative society",
+    "danish society", "danish housing scheme",
+    "sindhi muslim society",
+    "gulshan-e-ghazi", "gulshan e ghazi",
+    "kaneez fatima society",
+    "dawood society",
+    "manzoor colony",
+    "customs housing society",
+    "ayesha village",
+    "rufi lake city", "rufi green city",
+    "paradise city", "naya nazimabad", "naya nazimabad block a",
+    "naya nazimabad block b", "naya nazimabad block c",
+    "naya nazimabad block d",
+    "firdous colony",
+    "gizri",
+    "khudadad colony",
+    "sharifabad",
+    "sector 11-a", "sector 11-b",
+    "sector 15", "sector 16",
+    "sector 25",
+
+    # ===================== TIMBER MARKET / BURNS GARDEN =====================
+    "timber market", "burns garden", "burns road",
+
+    # ===================== OLD CITY AREAS =====================
+    "kharadar", "mithadar", "jodia bazar",
+    "bolton market", "boulton market",
+    "light house", "lighthouse",
+    "ranchhore line", "ranchore line",
+    "bambino", "bambino cinema",
+    "napier", "napier road",
+    "lasbela", "lasbella",
+    "denso hall", "memon goth",
+
+    # ===================== TOWER / CITY CENTRE =====================
+    "dolmen mall tariq road", "dolmen city",
+    "lucky one mall", "aladdin park",
+
+    # ===================== SHAH ABDUL LATIF BHITTAI TOWN =====================
+    "sab town", "shah abdul latif bhittai town",
+
+    # ===================== TAISER TOWN =====================
+    "taiser town", "taiser sector 45", "taiser sector 46",
+    "taiser sector 47", "taiser sector 48",
+    "taiser sector 49", "taiser sector 50",
+    "taiser sector 51", "taiser sector 76",
+    "taiser sector 77", "taiser sector 78",
+    "taiser sector 79", "taiser sector 80",
+
+    # ===================== KATHORE / DHABEJI =====================
+    "kathore", "dhabeji",
+
+    # ===================== SOHRAB GOTH / ABUL HASSAN ISPHAHANI =====================
+    "sohrab goth", "yousuf goth",
+    "kala board", "kala pul",
+
+    # ===================== MOWACH GOTH =====================
+    "mowach goth", "mawach goth",
+
+    # ===================== KUNWARI COLONY =====================
+    "kunwari colony",
+
+    # ===================== COMMERCIAL AREAS =====================
+    "i.i. chundrigar", "beaumont road",
+    "shahrah-e-liaquat", "shahrah e liaquat",
+    "shahrah-e-iraq", "shahrah e iraq",
+    "shahrah-e-pakistan", "shahrah e pakistan",
+    "korangi industrial",
+
+    # ===================== HIGHWAY / MOTORWAY AREAS =====================
+    "northern bypass", "lyari expressway",
+    "hub river road", "hub chowki",
+    "rcd highway",
+
+    # ===================== KARACHI ADMINISTRATION TOWNS =====================
+    "karachi central", "karachi east", "karachi south",
+    "karachi west", "korangi district", "malir district",
+
+    # ===================== ADDITIONAL MAJOR AREAS =====================
+    "abyssinia lines",
+    "agra taj",
+    "al-hilal society", "al hilal society",
+    "allama iqbal town",
+    "amir khusro",
+    "ancholi society",
+    "arambagh",
+    "azam basti",
+    "azam town",
+    "baloch colony", "baloch colony bridge",
+    "bhawani chali",
+    "buffer zone sector 15",
+    "chandni chowk",
+    "city railway colony",
+    "commercial area dha",
+    "dalmia",
+    "dhoraji", "dhoraji colony",
+    "disco bakery",
+    "drigh colony",
+    "ehsas society",
+    "fawara chowk",
+    "firozabad",
+    "futaili road",
+    "ghazi salahuddin road",
+    "gharibabad",
+    "golden town",
+    "golimar", "gol market",
+    "gul ahmed textile mills",
+    "gulbahar", "gulbahar no 1", "gulbahar no 2",
+    "gulshan-e-hadeed", "gulshan e hadeed",
+    "gulshan-e-hadeed phase 1", "gulshan-e-hadeed phase 2",
+    "gulshan-e-jamal", "gulshan e jamal",
+    "gulshan-e-umair",
+    "haji camp",
+    "haroon bahria",
+    "hassan colony",
+    "hornbill ground",
+    "hub dam road",
+    "hyderabad colony",
+    "iqra university",
+    "islam pura",
+    "jaffer-e-tayyar society", "jaffer e tayyar",
+    "jahangir park",
+    "kala pul",
+    "kamran chowrangi",
+    "kashmir colony",
+    "kazimabad",
+    "khairpur colony",
+    "khamosh colony",
+    "khokhrapar",
+    "lalazar",
+    "lalu khet", "lalu khait",
+    "latifabad",
+    "loo goth",
+    "mahmud abad",
+    "manzoor colony",
+    "masroor airbase",
+    "mauj goth",
+    "mcc quarters",
+    "metrovile sita",
+    "moosa colony", "moosa lane",
+    "muhajir camp",
+    "muslimabad",
+    "nabi bux road",
+    "nagin chorangi",
+    "nanakwara",
+    "naseerabad",
+    "naval colony",
+    "nazareth", "nazareth road",
+    "new challi",
+    "new town",
+    "pir bukhari",
+    "premnagar",
+    "punjab colony",
+    "qalandria colony",
+    "qasba colony", "qasba",
+    "rafah-e-aam society", "rafa e aam society",
+    "rahat commercial",
+    "rahim yar khan colony",
+    "razi road",
+    "rizvia society", "rizvia",
+    "saadi town",
+    "saeedabad",
+    "samanabad",
+    "saudabad",
+    "scheme 45",
+    "shafiq mor",
+    "shah wali ullah nagar",
+    "shahdara",
+    "shahra-e-noor jahan", "shahra e noor jahan",
+    "shahra-e-orangzeb", "shahra e orangzeb",
+    "shirin jinnah colony",
+    "sikandarabad",
+    "sindh industrial trading estate", "site industrial area",
+    "singer chowrangi",
+    "suparco road",
+    "tahir villa",
+    "tipu sultan road", "tipu sultan",
+    "umerabad",
+    "valika", "valmiki",
+    "wahid colony",
+    "yaseenabad",
+    "ziauddin hospital area",
+
+    # ===================== GATED COMMUNITIES & NEW DEVELOPMENTS =====================
+    "fazaia housing scheme", "fazaia",
+    "malir town residency", "mtr",
+    "jinnah garden", "jinnah garden phase 1",
+    "karachi creek marina",
+    "port tower",
+    "icon tower",
+    "pearl tower",
+    "al-ghurair giga", "al ghurair giga",
+    "lucky star",
+    "the arkadians",
+    "saima jinnah avenue",
+    "saima arabian villas",
+    "saima paari point",
+    "saima presidency",
+    "saima luxury homes",
+    "kings park",
+    "kings garden",
+    "dreams garden",
+    "palm residency",
+    "creek marina",
+    "emaar oceanfront",
+    "hoshang pearl",
+    "saima waterfront",
+    "karachi creek cantonment",
+    "punjab chowrangi",
+    "sakhi hassan", "sakhi hasan",
+    "paposh nagar",
+    "taj medical complex",
+    "yaseenabad",
+    "future colony",
+    "madina colony",
+    "mohammadpur",
+    "hijrat colony",
+
+    # ===================== GOTHS (Villages/Settlements) =====================
+    "hasan ali goth", "hassan ali goth",
+    "khamiso goth", "khamiso",
+    "sharafi goth", "sharfi goth",
+    "bakhtawar goth",
+    "bhittaiabad", "bhittai abad",
+    "dawood goth",
+    "rehman goth",
+    "raheem goth",
+    "hassan goth",
+    "bhatti goth",
+    "jumma goth",
+    "jam goth",
+    "qaim khani goth",
+    "gabo pat",
+    "chakra goth",
+    "musa goth",
+    "brohi goth",
+    "ghareebabad goth",
+    "dal goth",
+    "haji pir goth",
+    "ali akbar goth",
+    "sherpao goth",
+    "jam chakro",
+    "kati pahari",
+    "sultanabad goth",
+    "darsano chano",
+    "deh konkar",
+    "khuda ki basti", "khuda ki basti 1", "khuda ki basti 2",
+    "ittehad colony",
+    "raees goth",
+    "lakhani goth",
+    "lassi goth",
+    "mehran town goth",
+
+    # ===================== COLONIES & BASTIS =====================
+    "banaras colony", "banaras",
+    "bilal colony",
+    "gulzar colony",
+    "islam nagar",
+    "muslim mujahid colony",
+    "nai abadi",
+    "rasheedabad",
+    "machar colony", "machhar colony",
+    "bhutta village",
+    "shahnawaz bhutto colony",
+    "khawaja ajmeer nagri",
+    "mustafa colony",
+    "hakeem ahsan",
+    "kalyana",
+    "shafiq mill colony",
+    "water pump",
+    "nasirabad",
+    "delhi mercantile society", "delhi society",
+    "azam basti",
+    "chanesar town",
+    "jinnah town",
+    "aram bagh", "arambagh",
+    "taimuria",
+    "ibrahim razi road",
+    "pakistan chowk colony",
+    "rizwan colony",
+    "usmanabad",
+    "sultanabad",
+    "rafiqui shaheed colony",
+    "muhammadi colony",
+    "ayub goth",
+    "dockyard colony",
+    "siddiq wahab colony",
+    "baloch goth",
+    "shanti nagar",
+    "noor islam colony",
+    "liaquat colony",
+    "bukhari colony",
+    "pak colony",
+    "al rahim colony",
+    "gali colony",
+    "bilawal colony",
+    "shahpur chakar colony",
+    "alamgir society",
+
+    # ===================== COOPERATIVE HOUSING SOCIETIES =====================
+    "al hamra society", "al-hamra cooperative housing society",
+    "bahadur yar jang society", "bahadur yar jang cooperative",
+    "bihar muslim society", "bihar cooperative housing society",
+    "bangalore cooperative society", "bangalore town",
+    "cp berar society", "c.p. berar cooperative housing society",
+    "kutchi memon society", "kutchi memon cooperative",
+    "liaquat memorial society",
+    "abuzar ghaffari society",
+    "al ashraf society",
+    "ali town",
+    "aligarh muslim university society",
+    "newspaper employees society",
+    "business executive society",
+    "delhi raiyan society",
+    "government teachers society",
+    "asf city", "asf city karachi",
+    "al-kabir town", "al kabir town",
+    "al-jadeed residency",
+    "shamsi society",
+    "faran cooperative society", "faran society",
+    "memon cooperative housing society",
+    "al-habib garden",
+
+    # ===================== CANTONMENTS =====================
+    "clifton cantonment board",
+    "korangi creek cantonment",
+    "faisal cantonment",
+    "manora cantonment", "manora",
+    "manora island",
+    "oyster rocks",
+
+    # ===================== ROADS & CHOWRANGIS =====================
+    "teen talwar", "three swords",
+    "bilawal chowrangi",
+    "abdullah shah ghazi", "abdullah shah ghazi mazaar",
+    "do talwar",
+    "star gate",
+    "karachi expo centre", "expo centre",
+    "civic centre",
+    "shaheen complex",
+    "jinnah international airport", "airport",
+    "quaid-e-azam international airport",
+    "fawara chowk",
+    "guru nanak road",
+    "garden road",
+    "sir shah suleman road",
+    "sir syed road",
+    "mai kolachi", "mai kolachi bypass",
+    "sher shah suri road",
+    "habib ibrahim rahimtoola road",
+    "business bay", "business bay dha",
+    "dolmen mall",
+    "millennium mall",
+    "atrium mall",
+    "luckyone mall",
+    "the forum",
+    "ocean tower",
+    "centrepoint",
+    "bahria icon tower",
+    "sarjani chowrangi",
+    "water pump chowrangi",
+    "hassan chowrangi",
+    "safari park",
+    "hill park",
+    "patel hospital area",
+
+    # ===================== INDUSTRIAL AREAS =====================
+    "hub industrial trading estate", "hub industrial area",
+    "north western industrial zone",
+    "export processing zone", "epz",
+    "karachi export processing zone",
+    "west wharf",
+    "east wharf",
+    "port area",
+    "timber ponds",
+    "native jetty",
+    "harbour",
+
+    # ===================== SCHEME 33 SOCIETIES =====================
+    "al noor housing society scheme 33",
+    "shamsi cooperative society scheme 33",
+    "national cement employees society",
+    "memon cooperative scheme 33",
+    "gulshan e roomi",
+    "paradise homes scheme 33",
+    "pakistan town scheme 33",
+    "united town scheme 33",
+    "roshan town scheme 33",
+
+    # ===================== GULSHAN-E-IQBAL SUB-AREAS =====================
+    "rashid minhas colony",
+    "saadi garden",
+    "block 4-a gulshan",
+    "block 10-a gulshan",
+    "block 13-d gulshan",
+    "block 13-l gulshan",
+
+    # ===================== ADDITIONAL MISSING AREAS =====================
+    "ferozabad", "ferozeabad",
+    "jamshed quarters",
+    "manzoor colony extension",
+    "bhawani chali",
+    "city courts area",
+    "sindh assembly",
+    "sindh secretariat",
+    "governor house area",
+    "frere town", "frere hall",
+    "sindh club",
+    "arts council",
+    "karachi press club",
+    "metropole", "hotel metropole",
+    "avari towers area",
+    "sheraton area",
+    "jung chowrangi",
+    "karachi zoo", "gandhi garden",
+    "bagh-e-jinnah", "bagh e jinnah",
+    "nishtar park",
+    "karachi gymkhana",
+    "bagh ibn-e-qasim", "bagh ibne qasim",
+    "sea view park",
+    "karachi port trust", "kpt",
+    "merewether tower",
+    "denso hall area",
+    "new memon masjid area",
+    "kabootar chowk",
+    "capri cinema",
+    "bambino cinema area",
+    "paradise cinema",
+    "social security",
+    "social security hospital area",
+    "sindh govt hospital area",
+    "jinnah hospital area", "jinnah hospital",
+    "civil hospital area", "civil hospital",
+    "aga khan hospital", "aku",
+    "liaquat national hospital area",
+    "dow hospital area", "dow university",
+    "indus hospital area",
+    "ziauddin hospital",
+    "abbasi shaheed hospital",
+    "tabba heart hospital",
+    "pns shifa", "pns shifa hospital",
+    "cmc hospital area",
+
+    # ===================== MARKETS & COMMERCIAL ZONES =====================
+    "tariq road market",
+    "hyderi market area",
+    "dolmen mall hyderi",
+    "chase up",
+    "millennium mall area",
+    "rimpa plaza",
+    "luckyone mall area",
+    "brt peshawar mor",
+    "karachi company",
+    "furniture market",
+    "cloth market", "cloth market karachi",
+    "shoe market", "shoe market saddar",
+    "electronics market",
+    "allah wala market",
+    "paper market",
+    "china market",
+    "bara market",
+    "dabh market",
+    "crystal market",
+    "rainbow centre",
+    "star city mall",
+    "metro star gate",
+    "metro centre",
+    "it tower",
+
+    # ===================== EDUCATION ZONES =====================
+    "karachi university area", "uok",
+    "ned university area",
+    "iqra university area",
+    "szabist", "szabist area",
+    "iba karachi", "iba main campus",
+    "iba city campus",
+    "fast university", "fast nuces",
+    "usman institute",
+    "habib university",
+    "indus university",
+    "sir syed university", "ssuet",
+    "bahria university",
+    "jinnah sindh medical university",
+    "dj science college area",
+    "adamjee nagar",
+    "nust karachi",
+
+    # ===================== MISC REMAINING AREAS =====================
+    "keamari harbour",
+    "bhit shah colony",
+    "moriro mirbahar",
+    "rehri goth",
+    "ghizri creek",
+    "ghizri area",
+    "korangi creek area",
+    "navy yard",
+    "pakistan navy dockyard",
+    "kemari harbour",
+    "manora breakwater",
+    "hawks bay beach",
+    "sandspit beach",
+    "french beach",
+    "turtle beach",
+    "paradise point",
+    "cape monze", "cape mount", "ras muari",
+    "mubarak village",
+    "gadani", "gadani beach",
+    "karachi northern bypass",
+    "shah mureed",
+    "murad memon",
+    "deh konkar",
+    "kathore town",
+    "nooriabad",
+    "jhampir",
+    "thatta road",
+    "gharo",
+    "mirpur sakro",
+    "keti bandar",
+    "layari river",
+    "malir river",
+    "hub river",
+    "haleji lake area",
+    "keenjhar lake area",
+    "pakistan refinery area",
+    "national refinery area",
+    "pso house area",
+    "byco refinery area",
+    "power house",
+    "hub power plant area",
+    "lucky cement area",
+    "korangi waste water area",
+
+    # ===================== UNION COUNCIL AREAS =====================
+    "pakhtunabad", "pakhtoonabad",
+    "pashtunabad",
+    "kda flats", "kda scheme",
+    "kda officers society",
+    "bagh-e-korangi", "bagh e korangi",
+    "shah rasool colony",
+    "awami colony",
+    "al-asif square", "al asif square",
+    "gulshan-e-buner", "gulshan e buner",
+    "kaneez fatima colony",
+    "frontier colony",
+    "tribal goth",
+    "afridi colony",
+    "pathan colony",
+    "afghan basti",
+    "sherabad",
+    "pirabad",
+    "spini road",
+    "mujahidabad",
+    "zia colony",
+    "haroonabad",
+    "gulshan-e-bihar", "gulshan e bihar",
+    "gulshan-e-zealpak",
+    "new mianwali colony",
+    "new sabzi mandi",
+    "old sabzi mandi",
+    "bhutta colony",
+    "katchi abadi",
+    "katchi abadi sultanabad",
+    "ibrahim joyo road",
+    "jan mohammad road",
+    "larkana chowk",
+    "sukkur chowk",
+    "khairpur chowk",
+    "quetta chowk",
+    "peshawar chowk",
+    "lahore chowk",
+    "islamabad chowk",
+    "multan chowk",
+    "rawalpindi chowk",
 ]
+
 
 def extract_location(text: str, last_ai: str):
     text_lower = text.lower()
@@ -780,7 +1711,7 @@ RULES:
 
 9. LOCATION EXTRACTION: Extract ONLY the core area name for location field (e.g., user says "DHA phase 5 mein yaar" → extract "DHA Phase 5"). Never include conversational words.
 
-10. FRUSTRATED USERS: If angry/frustrated (not profanity) → briefly calm them warmly (1-2 lines), guide back to property. Never match anger or sound condescending.
+10. FRUSTRATED OR IMPATIENT USERS: If user is angry/frustrated → briefly calm them warmly, guide back to property. If user is IMPATIENT or RUSHING (e.g., "jaldi karo", "urgent hai") especially after their details are taken → DO NOT give repetitive formal or robotic answers (like "priority list mein daal diya hai"). Instead, calm them down with empathetic, natural Urdu like: "Janab tasalli rakhein, aap ki request hum tak phonch chuki hai. Jald hi aap se rabta karein ge, fikr na karein aapka kaam jald ho jaayega ✨". Vary your phrasing slightly each time so it sounds human and reassuring.
 """
 
 def extract_clean_json(raw_text: str) -> dict:
@@ -1266,6 +2197,20 @@ def process_whatsapp_data(data: dict):
                         session["name_confirm_pending"] = False
                         ai_reply = f"Theek hai! Aapka naam *'{old_name}'* hi rahega. Koi aur madad chahiye? 😊"
 
+                    elif btn_id == "loc_confirm_yes":
+                        pending_loc = session.get("pending_location", "")
+                        session["location"] = pending_loc
+                        session["location_confirm_pending"] = False
+                        session["pending_location"] = None
+                        session["funnel_state"] = None
+                        msg_body = f"Mera location {pending_loc} confirm ho gaya hai. Ab aap mujhse agli requirement poochein."
+                        
+                    elif btn_id == "loc_confirm_no":
+                        session["location_confirm_pending"] = False
+                        session["pending_location"] = None
+                        session["funnel_state"] = None
+                        ai_reply = "Theek hai Janab, maazrat. Aap dobara bata dein ke aap kis area mein property dekhna chahte hain?"
+
                     elif "confirm" in btn_id:
                         session["search_confirmed"] = True
                         if session.get("purpose") == "sell":
@@ -1337,7 +2282,8 @@ def process_whatsapp_data(data: dict):
                         save_chat_history(from_number, tenant_id, "assistant", ai_reply)
                     
                     save_user_session(from_number, tenant_id, session)
-                    return
+                    if btn_id != "loc_confirm_yes":
+                        return
 
                 # Intent shifts and confirmations are now handled purely by LLM and Button IDs
 
@@ -1473,7 +2419,22 @@ def process_whatsapp_data(data: dict):
                 if budget: session["budget"] = budget
                 
                 loc = extract_location(msg_body, last_ai)
-                if loc: session["location"] = loc
+                if loc and loc != session.get("location") and not session.get("location_confirm_pending") and not btn_id:
+                    session["pending_location"] = loc
+                    session["location_confirm_pending"] = True
+                    session["funnel_state"] = "AWAITING_LOC_CONFIRM"
+                    action_word = "bechna" if session.get("purpose") == "sell" else "dekhna"
+                    msg = f"Aapne *{loc}* bataya hai. Kya aap waqai yahan property {action_word} chahte hain? 📍"
+                    send_whatsapp_buttons(tenant_id, from_number, msg, 
+                                          [{"id": "loc_confirm_yes", "title": "Haan, Yahi ✅"}, 
+                                           {"id": "loc_confirm_no", "title": "Nahi, Galat ❌"}], wa_token)
+                    chat_hist.append({"role": "user", "content": msg_body})
+                    chat_hist.append({"role": "assistant", "content": msg})
+                    session["chat_history"] = chat_hist[-50:]
+                    save_user_session(from_number, tenant_id, session)
+                    return
+                elif loc: 
+                    session["location"] = loc
 
                 # =================================================================
                 # IRON DOME: Backend-Level Jailbreak & Off-Topic Filter
