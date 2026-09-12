@@ -2215,6 +2215,7 @@ def process_whatsapp_data(data: dict):
                                     session["active_property"] = pid
                                     break
                 chat_hist = session["chat_history"]
+                last_ai = chat_hist[-1]["content"] if chat_hist else ""
                 
                 # Initial Greeting or Returning User
                 is_new_session = not chat_hist
