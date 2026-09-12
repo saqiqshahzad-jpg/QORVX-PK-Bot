@@ -618,10 +618,14 @@ def execute_property_search(session, tenant_config, wa_token, from_number, tenan
         # Send TEXT with details first
         msg_id = send_whatsapp_text(tenant_id, from_number, caption, wa_token)
         
-        # Send IMAGES sequentially (Limit to 3 to prevent massive delays)
-        for img_url in images[:3]:
-            send_whatsapp_image(tenant_id, from_number, img_url, "", wa_token)
-            time.sleep(0.5)
+        if images:
+            # Send wait message
+            send_whatsapp_text(tenant_id, from_number, "Thora wait karein, main iski images bhej raha hu... 🖼️", wa_token)
+            
+            # Send IMAGES sequentially (Limit to 3 to prevent massive delays)
+            for img_url in images[:3]:
+                send_whatsapp_image(tenant_id, from_number, img_url, "", wa_token)
+                time.sleep(0.5)
             
         if msg_id:
             p["message_id"] = msg_id
@@ -633,7 +637,7 @@ def execute_property_search(session, tenant_config, wa_token, from_number, tenan
         else:
             session["active_property"] = None
         
-        time.sleep(1.5)
+        time.sleep(2.0) # Ensure images arrive before buttons
         after_msg = "Inmein se koi pasand aaya ya mazeed options dekhne hain? 👇"
         buttons = ["Sasta option 📉", "Koi aur option 🔄", {"id": f"visit_{prop_id}", "title": "Visit karna 📅"}]
         send_whatsapp_buttons(tenant_id, from_number, after_msg, buttons, wa_token)
