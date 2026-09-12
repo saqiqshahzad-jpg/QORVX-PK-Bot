@@ -2219,8 +2219,7 @@ def process_whatsapp_data(data: dict):
                 # Initial Greeting or Returning User
                 is_new_session = not chat_hist
                 is_stale_session = now - session.get("last_interaction", now) > 86400 # 24 hours memory
-                is_greeting = msg_body.lower() in ["hi", "hello", "salam", "assalam o alaikum", "menu", "start", "hey"]
-                is_salam = msg_body.lower() in ["salam", "assalam o alaikum", "aoa", "assalamualaikum", "as salam o alaikum", "slaam", "slam", "sallam"]
+                is_greeting = msg_body.lower() in ["hi", "hello", "salam", "assalam o alaikum", "aoa", "assalamualaikum", "as salam o alaikum", "slaam", "slam", "sallam", "menu", "start", "hey"]
 
                 if (is_new_session or is_stale_session) and is_greeting:
                     msg = "Assalam o Alaikum! 🙏 Qorvx PK Bot mein khush amdeed. Main aapki property ke hawale se kaise madad kar sakta hoon? 👇"
@@ -2233,15 +2232,23 @@ def process_whatsapp_data(data: dict):
                     save_user_session(from_number, tenant_id, session)
                     return
 
-                # Salam during active session — always reply, but just Walaikum Assalam
-                if is_salam and not is_new_session and not is_stale_session:
-                    salam_reply = "Walaikum Assalam! 🙏"
-                    send_whatsapp_text(tenant_id, from_number, salam_reply, wa_token)
+                # Greeting during active session — JESI GREETING WESA REPLY
+                if is_greeting and not is_new_session and not is_stale_session and msg_body.lower() != "menu" and msg_body.lower() != "start":
+                    msg_lower = msg_body.lower()
+                    if msg_lower in ["salam", "assalam o alaikum", "aoa", "assalamualaikum", "as salam o alaikum", "slaam", "slam", "sallam"]:
+                        greeting_reply = "Walaikum Assalam! 🙏"
+                    elif msg_lower in ["hi", "hello"]:
+                        greeting_reply = "Hello! 👋"
+                    elif msg_lower == "hey":
+                        greeting_reply = "Hey! 👋"
+                    else:
+                        greeting_reply = "Hello! 👋"
+                    send_whatsapp_text(tenant_id, from_number, greeting_reply, wa_token)
                     chat_hist.append({"role": "user", "content": msg_body})
-                    chat_hist.append({"role": "assistant", "content": salam_reply})
+                    chat_hist.append({"role": "assistant", "content": greeting_reply})
                     session["chat_history"] = chat_hist[-50:]
                     save_chat_history(from_number, tenant_id, "user", msg_body)
-                    save_chat_history(from_number, tenant_id, "assistant", salam_reply)
+                    save_chat_history(from_number, tenant_id, "assistant", greeting_reply)
                     save_user_session(from_number, tenant_id, session)
                     return
 
