@@ -2219,7 +2219,38 @@ def process_whatsapp_data(data: dict):
                 # Initial Greeting or Returning User
                 is_new_session = not chat_hist
                 is_stale_session = now - session.get("last_interaction", now) > 86400 # 24 hours memory
-                is_greeting = msg_body.lower() in ["hi", "hello", "salam", "assalam o alaikum", "aoa", "assalamualaikum", "as salam o alaikum", "slaam", "slam", "sallam", "menu", "start", "hey"]
+                # ─── GREETING LISTS ────────────────────────────────────────
+                SALAM_WORDS = [
+                    "salam", "slaam", "slam", "sallam", "salaam", "slm",
+                    "assalam o alaikum", "assalamualaikum", "as salam o alaikum",
+                    "aoa", "asalamualaikum", "assalam u alaikum", "assalam-o-alaikum",
+                    "salamalaikum", "salam alaikum", "salam o alaikum",
+                    "assalamu alaikum", "aslkm", "asslam o alikum",
+                    "assalam alaikum", "salam alekum", "assalamualekum",
+                    "walaikum assalam", "ws", "walaikum salam",
+                    "wa alaikum assalam", "walikum salam", "walikum assalam",
+                ]
+                HI_WORDS = [
+                    "hi", "hii", "hiii", "hiiii", "hiiiii",
+                    "hello", "helo", "hllo", "helloo", "hellooo", "helloooo",
+                    "holla", "hola",
+                ]
+                HEY_WORDS = ["hey", "heyy", "heyyy", "heya"]
+                YO_WORDS = ["yo", "yoo", "yooo", "sup", "wassup", "whatsup", "what's up"]
+                MORNING_WORDS = ["good morning", "gm", "morning", "subah bakhair", "subha bakhair"]
+                AFTERNOON_WORDS = ["good afternoon", "ga", "afternoon"]
+                EVENING_WORDS = ["good evening", "ge", "evening", "shaam bakhair", "sham bakhair"]
+                NIGHT_WORDS = ["good night", "gn", "night", "shab bakhair"]
+                ADAAB_WORDS = ["adaab", "adab", "aadab", "adaab arz", "adaab arz hai"]
+                MENU_WORDS = ["menu", "start"]
+                
+                ALL_GREETINGS = (SALAM_WORDS + HI_WORDS + HEY_WORDS + YO_WORDS + 
+                                 MORNING_WORDS + AFTERNOON_WORDS + EVENING_WORDS + 
+                                 NIGHT_WORDS + ADAAB_WORDS + MENU_WORDS)
+                
+                msg_lower_stripped = msg_body.lower().strip().rstrip("!.?,")
+                is_greeting = msg_lower_stripped in ALL_GREETINGS
+                # ──────────────────────────────────────────────────────────────
 
                 if (is_new_session or is_stale_session) and is_greeting:
                     msg = "Assalam o Alaikum! 🙏 Qorvx PK Bot mein khush amdeed. Main aapki property ke hawale se kaise madad kar sakta hoon? 👇"
@@ -2233,14 +2264,25 @@ def process_whatsapp_data(data: dict):
                     return
 
                 # Greeting during active session — JESI GREETING WESA REPLY
-                if is_greeting and not is_new_session and not is_stale_session and msg_body.lower() != "menu" and msg_body.lower() != "start":
-                    msg_lower = msg_body.lower()
-                    if msg_lower in ["salam", "assalam o alaikum", "aoa", "assalamualaikum", "as salam o alaikum", "slaam", "slam", "sallam"]:
+                if is_greeting and not is_new_session and not is_stale_session and msg_lower_stripped not in MENU_WORDS:
+                    if msg_lower_stripped in SALAM_WORDS:
                         greeting_reply = "Walaikum Assalam! 🙏"
-                    elif msg_lower in ["hi", "hello"]:
+                    elif msg_lower_stripped in HI_WORDS:
                         greeting_reply = "Hello! 👋"
-                    elif msg_lower == "hey":
+                    elif msg_lower_stripped in HEY_WORDS:
                         greeting_reply = "Hey! 👋"
+                    elif msg_lower_stripped in YO_WORDS:
+                        greeting_reply = "Yo! 👋"
+                    elif msg_lower_stripped in MORNING_WORDS:
+                        greeting_reply = "Good Morning! ☀️"
+                    elif msg_lower_stripped in AFTERNOON_WORDS:
+                        greeting_reply = "Good Afternoon! 🌤️"
+                    elif msg_lower_stripped in EVENING_WORDS:
+                        greeting_reply = "Good Evening! 🌆"
+                    elif msg_lower_stripped in NIGHT_WORDS:
+                        greeting_reply = "Good Night! 🌙"
+                    elif msg_lower_stripped in ADAAB_WORDS:
+                        greeting_reply = "Adaab! 🙏"
                     else:
                         greeting_reply = "Hello! 👋"
                     send_whatsapp_text(tenant_id, from_number, greeting_reply, wa_token)
