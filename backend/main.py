@@ -74,7 +74,8 @@ def get_user_session(phone: str, tenant_id: str):
         "budget": None, "user_name": None, "state": None, "funnel_state": None, 
         "awaiting_confirmation": False, "search_confirmed": False, "chat_history": [], 
         "active_property": None, "sent_properties": [], "archived_intents": [], "last_interaction": time.time(),
-        "name_confirm_pending": False, "pending_new_name": None
+        "name_confirm_pending": False, "pending_new_name": None,
+        "sub_location": None, "sub_location_pending": False, "sub_location_prompt": None
     }
     try:
         url = f"{SUPABASE_URL}/rest/v1/user_sessions?phone_number=eq.{phone}&tenant_id=eq.{tenant_id}&select=*"
@@ -1651,6 +1652,152 @@ KARACHI_AREAS = [
     "rawalpindi chowk",
 ]
 
+# =========================================================================================
+# LOCATION SUB-VARIANTS — Areas that have phases/blocks/sectors/precincts
+# When user gives generic name (e.g. "DHA") without specifying sub-area,
+# bot will ask for the specific sub-variant along with the next question.
+# =========================================================================================
+LOCATION_SUB_VARIANTS = {
+    # ── DHA / Defence → Phase ──
+    "dha": {"prompt": "DHA ke kis Phase mein? (Phase 1-8, DHA City, etc.)", "type": "phase"},
+    "defence": {"prompt": "Defence ke kis Phase mein? (Phase 1-8, DHA City, etc.)", "type": "phase"},
+
+    # ── Clifton → Block ──
+    "clifton": {"prompt": "Clifton ke kis Block mein? (Block 1-9)", "type": "block"},
+
+    # ── Bahria Town → Precinct ──
+    "bahria": {"prompt": "Bahria Town ke kis Precinct mein? (Precinct 1-31, Paradise, Heights, etc.)", "type": "precinct"},
+    "bahria town": {"prompt": "Bahria Town ke kis Precinct mein? (Precinct 1-31, Paradise, Heights, etc.)", "type": "precinct"},
+    "bahria town karachi": {"prompt": "Bahria Town ke kis Precinct mein? (Precinct 1-31, Paradise, Heights, etc.)", "type": "precinct"},
+
+    # ── Gulshan-e-Iqbal → Block ──
+    "gulshan": {"prompt": "Gulshan-e-Iqbal ke kis Block mein? (Block 1-16)", "type": "block"},
+    "gulshan-e-iqbal": {"prompt": "Gulshan-e-Iqbal ke kis Block mein? (Block 1-16)", "type": "block"},
+    "gulshan e iqbal": {"prompt": "Gulshan-e-Iqbal ke kis Block mein? (Block 1-16)", "type": "block"},
+
+    # ── Gulistan-e-Johar → Block ──
+    "johar": {"prompt": "Gulistan-e-Johar ke kis Block mein? (Block 1-19)", "type": "block"},
+    "gulistan-e-johar": {"prompt": "Gulistan-e-Johar ke kis Block mein? (Block 1-19)", "type": "block"},
+    "gulistan e johar": {"prompt": "Gulistan-e-Johar ke kis Block mein? (Block 1-19)", "type": "block"},
+
+    # ── North Nazimabad → Block ──
+    "north nazimabad": {"prompt": "North Nazimabad ke kis Block mein? (Block A-T)", "type": "block"},
+
+    # ── Nazimabad → Number ──
+    "nazimabad": {"prompt": "Nazimabad ke kis number mein? (No 1-5)", "type": "number"},
+
+    # ── FB Area / Federal B Area → Block ──
+    "fb area": {"prompt": "FB Area ke kis Block mein? (Block 1-20)", "type": "block"},
+    "federal b area": {"prompt": "Federal B Area ke kis Block mein? (Block 1-20)", "type": "block"},
+
+    # ── PECHS → Block ──
+    "pechs": {"prompt": "PECHS ke kis Block mein? (Block 1, 2, 3, 6)", "type": "block"},
+    "pech": {"prompt": "PECHS ke kis Block mein? (Block 1, 2, 3, 6)", "type": "block"},
+
+    # ── North Karachi → Sector ──
+    "north karachi": {"prompt": "North Karachi ke kis Sector mein? (Sector 5a-14b)", "type": "sector"},
+
+    # ── New Karachi → Sector ──
+    "new karachi": {"prompt": "New Karachi ke kis Sector mein? (Sector 1-5)", "type": "sector"},
+
+    # ── Scheme 33 → Sector ──
+    "scheme 33": {"prompt": "Scheme 33 ke kis Sector mein? (Sector 17-54)", "type": "sector"},
+
+    # ── Surjani Town → Sector ──
+    "surjani": {"prompt": "Surjani Town ke kis Sector mein? (Sector 1-8)", "type": "sector"},
+    "surjani town": {"prompt": "Surjani Town ke kis Sector mein? (Sector 1-8)", "type": "sector"},
+
+    # ── Orangi Town → Sector ──
+    "orangi": {"prompt": "Orangi Town ke kis Sector mein? (Sector 1-14)", "type": "sector"},
+    "orangi town": {"prompt": "Orangi Town ke kis Sector mein? (Sector 1-14)", "type": "sector"},
+
+    # ── Korangi → Sector/No ──
+    "korangi": {"prompt": "Korangi ke kis area mein? (No 1-6, Sector 31-35, Creek, etc.)", "type": "sector"},
+
+    # ── Landhi → Number ──
+    "landhi": {"prompt": "Landhi ke kis number mein? (No 1-6)", "type": "number"},
+
+    # ── Liaquatabad → Number ──
+    "liaquatabad": {"prompt": "Liaquatabad ke kis number mein? (No 1-10)", "type": "number"},
+
+    # ── Gulshan-e-Hadeed → Phase ──
+    "gulshan-e-hadeed": {"prompt": "Gulshan-e-Hadeed ke kis Phase mein? (Phase 1, 2)", "type": "phase"},
+    "gulshan e hadeed": {"prompt": "Gulshan-e-Hadeed ke kis Phase mein? (Phase 1, 2)", "type": "phase"},
+
+    # ── Mehmoodabad → Number ──
+    "mehmoodabad": {"prompt": "Mehmoodabad ke kis number mein? (No 1-6)", "type": "number"},
+
+    # ── Askari → Number ──
+    "askari": {"prompt": "Askari ke kis number mein? (Askari 1-5)", "type": "number"},
+
+    # ── Shah Faisal → Colony Number ──
+    "shah faisal": {"prompt": "Shah Faisal ke kis area mein? (Colony 1-3, Town?)", "type": "number"},
+    "shah faisal colony": {"prompt": "Shah Faisal Colony ke kis number mein? (Colony 1-3)", "type": "number"},
+
+    # ── Naya Nazimabad → Block ──
+    "naya nazimabad": {"prompt": "Naya Nazimabad ke kis Block mein? (Block A-D)", "type": "block"},
+
+    # ── Baldia Town → Sector ──
+    "baldia": {"prompt": "Baldia Town ke kis Sector mein? (Sector 1-5)", "type": "sector"},
+    "baldia town": {"prompt": "Baldia Town ke kis Sector mein? (Sector 1-5)", "type": "sector"},
+
+    # ── Metroville → Block ──
+    "metroville": {"prompt": "Metroville ke kis Block mein? (Block 1-3)", "type": "block"},
+
+    # ── Gulshan-e-Maymar → Sector ──
+    "gulshan-e-maymar": {"prompt": "Gulshan-e-Maymar ke kis Sector mein? (Sector X, Y, Z)", "type": "sector"},
+    "gulshan e maymar": {"prompt": "Gulshan-e-Maymar ke kis Sector mein? (Sector X, Y, Z)", "type": "sector"},
+    "maymar": {"prompt": "Gulshan-e-Maymar ke kis Sector mein? (Sector X, Y, Z)", "type": "sector"},
+
+    # ── Shah Latif Town → Sector ──
+    "shah latif": {"prompt": "Shah Latif Town ke kis Sector mein? (Sector 14-19)", "type": "sector"},
+    "shah latif town": {"prompt": "Shah Latif Town ke kis Sector mein? (Sector 14-19)", "type": "sector"},
+
+    # ── Taiser Town → Sector ──
+    "taiser town": {"prompt": "Taiser Town ke kis Sector mein? (Sector 45-80)", "type": "sector"},
+
+    # ── Buffer Zone → Sector ──
+    "buffer zone": {"prompt": "Buffer Zone ke kis area mein? (Sector 15-A, North?)", "type": "sector"},
+
+    # ── Gulberg → Type ──
+    "gulberg": {"prompt": "Gulberg ke kis area mein? (Gulberg Town, Gulberg Greens?)", "type": "area"},
+
+    # ── Khuda Ki Basti → Number ──
+    "khuda ki basti": {"prompt": "Khuda Ki Basti ke kis number mein? (1 ya 2)", "type": "number"},
+
+    # ── Gulbahar → Number ──
+    "gulbahar": {"prompt": "Gulbahar ke kis number mein? (No 1, 2)", "type": "number"},
+}
+
+
+def _location_already_specific(text_lower: str, generic_key: str) -> bool:
+    """Check if the user's text already contains a specific sub-variant of the generic location.
+    E.g., if generic_key is 'dha' and text contains 'dha phase 5', return True.
+    """
+    sorted_areas = sorted(KARACHI_AREAS, key=len, reverse=True)
+    for area in sorted_areas:
+        if area == generic_key:
+            continue  # skip the generic itself
+        if area.startswith(generic_key) and area in text_lower and len(area) > len(generic_key):
+            return True
+        # Also check patterns like "clifton block 3" where generic is "clifton"
+        if generic_key in area and area in text_lower and area != generic_key:
+            return True
+    return False
+
+
+def _get_specific_sublocation(text_lower: str, generic_key: str) -> str:
+    """Extract the most specific sub-location from text for the given generic key.
+    Returns the specific location title, or None.
+    """
+    sorted_areas = sorted(KARACHI_AREAS, key=len, reverse=True)
+    for area in sorted_areas:
+        if area == generic_key:
+            continue
+        if area in text_lower and (area.startswith(generic_key) or generic_key in area) and len(area) > len(generic_key):
+            return area.title()
+    return None
+
 
 def extract_location(text: str, last_ai: str):
     text_lower = text.lower()
@@ -1712,6 +1859,8 @@ RULES:
 9. LOCATION EXTRACTION: Extract ONLY the core area name for location field (e.g., user says "DHA phase 5 mein yaar" → extract "DHA Phase 5"). Never include conversational words.
 
 10. FRUSTRATED OR IMPATIENT USERS: If user is angry/frustrated → briefly calm them warmly, guide back to property. If user is IMPATIENT or RUSHING (e.g., "jaldi karo", "urgent hai") especially after their details are taken → DO NOT give repetitive formal or robotic answers (like "priority list mein daal diya hai"). Instead, calm them down with empathetic, natural Urdu like: "Janab tasalli rakhein, aap ki request hum tak phonch chuki hai. Jald hi aap se rabta karein ge, fikr na karein aapka kaam jald ho jaayega ✨". Vary your phrasing slightly each time so it sounds human and reassuring.
+
+11. SUB-LOCATION VARIANTS (CRITICAL): When the session has "sub_location_pending": true and "sub_location_prompt" is set, you MUST COMBINE the sub-location question with whatever you were going to ask next (usually budget or property type). Example: if sub_location_prompt is "DHA ke kis Phase mein? (Phase 1-8, DHA City, etc.)" and you need to ask budget, your reply should be like: "Behtareen, DHA mein achi choice hai! 📍 Waise {sub_location_prompt} Aur saath hi apna budget bhi bata dein 💰". NEVER ask the sub-location question alone — ALWAYS combine it with the next requirement question. If user has already provided budget too, then just ask the sub-location question naturally. If sub_location_pending is false, do NOT ask about phases/blocks/sectors.
 """
 
 def extract_clean_json(raw_text: str) -> dict:
@@ -2098,6 +2247,69 @@ def process_whatsapp_data(data: dict):
                         save_user_session(from_number, tenant_id, session)
                         return
 
+                # ─── SUB-LOCATION RESPONSE handler ──────────────────────────
+                # When bot asked for sub-variant (phase/block/sector) and user responds
+                if session.get("sub_location_pending") and session.get("location"):
+                    loc_lower = session["location"].lower()
+                    # Try to extract a more specific location from user's reply
+                    specific_loc = extract_location(msg_body, last_ai)
+                    if specific_loc:
+                        specific_lower = specific_loc.lower()
+                        # Check if this is indeed a sub-variant of the current location
+                        if specific_lower != loc_lower and (
+                            specific_lower.startswith(loc_lower) or 
+                            loc_lower in specific_lower or
+                            _location_already_specific(msg_body.lower(), loc_lower)
+                        ):
+                            session["location"] = specific_loc
+                            session["sub_location_pending"] = False
+                            session["sub_location_prompt"] = None
+                            logger.info(f"📍 Sub-location resolved: '{specific_loc}'")
+                        elif specific_lower in KARACHI_AREAS:
+                            # User gave a completely different location — update it
+                            session["location"] = specific_loc
+                            # Check if new location also has sub-variants
+                            new_sub = LOCATION_SUB_VARIANTS.get(specific_lower)
+                            if new_sub and not _location_already_specific(msg_body.lower(), specific_lower):
+                                session["sub_location_pending"] = True
+                                session["sub_location_prompt"] = new_sub["prompt"]
+                            else:
+                                session["sub_location_pending"] = False
+                                session["sub_location_prompt"] = None
+                    else:
+                        # User might have typed just "phase 5" or "block 3" etc.
+                        # Try to combine with existing location
+                        sub_patterns = [
+                            (r'phase\s*(\d+)', 'phase'),
+                            (r'block\s*(\w+)', 'block'),
+                            (r'sector\s*(\w+)', 'sector'),
+                            (r'precinct\s*(\d+\w*)', 'precinct'),
+                            (r'no\.?\s*(\d+)', 'no'),
+                            (r'number\s*(\d+)', 'no'),
+                        ]
+                        for pattern, keyword in sub_patterns:
+                            m = re.search(pattern, msg_body.lower())
+                            if m:
+                                sub_val = m.group(1)
+                                combined = f"{session['location']} {keyword} {sub_val}".lower()
+                                # Check if this combined name exists in our areas list
+                                if combined in KARACHI_AREAS:
+                                    session["location"] = combined.title()
+                                else:
+                                    # Even if not in list, set it as location for search
+                                    session["location"] = f"{session['location']} {keyword.title()} {sub_val.upper() if len(sub_val) == 1 else sub_val}"
+                                session["sub_location_pending"] = False
+                                session["sub_location_prompt"] = None
+                                logger.info(f"📍 Sub-location built from pattern: '{session['location']}'")
+                                break
+                        
+                        # If user says "koi bhi" / "any" / skip → accept general location
+                        skip_words = ["koi bhi", "koi", "any", "farq nahi", "kuch bhi", "jo bhi", "skip", "general", "sab"]
+                        if any(sw in msg_body.lower() for sw in skip_words):
+                            session["sub_location_pending"] = False
+                            session["sub_location_prompt"] = None
+                            logger.info(f"📍 User skipped sub-location, keeping general: '{session['location']}'")
+
                 # Lead Capture Booking Engine
                 if session.get("funnel_state") == "AWAITING_VISIT_INFO":
                     sent_props = session.get("sent_properties", [])
@@ -2203,6 +2415,12 @@ def process_whatsapp_data(data: dict):
                         session["location_confirm_pending"] = False
                         session["pending_location"] = None
                         session["funnel_state"] = None
+                        # Check if confirmed location has sub-variants
+                        pending_lower = pending_loc.lower()
+                        sub_info = LOCATION_SUB_VARIANTS.get(pending_lower)
+                        if sub_info and not _location_already_specific(pending_lower, pending_lower):
+                            session["sub_location_pending"] = True
+                            session["sub_location_prompt"] = sub_info["prompt"]
                         msg_body = f"Mera location {pending_loc} confirm ho gaya hai. Ab aap mujhse agli requirement poochein."
                         
                     elif btn_id == "loc_confirm_no":
@@ -2420,19 +2638,49 @@ def process_whatsapp_data(data: dict):
                 
                 loc = extract_location(msg_body, last_ai)
                 if loc and loc != session.get("location") and not session.get("location_confirm_pending") and not btn_id:
-                    session["pending_location"] = loc
-                    session["location_confirm_pending"] = True
-                    session["funnel_state"] = "AWAITING_LOC_CONFIRM"
-                    action_word = "bechna" if session.get("purpose") == "sell" else "dekhna"
-                    msg = f"Aapne *{loc}* bataya hai. Kya aap waqai yahan property {action_word} chahte hain? 📍"
-                    send_whatsapp_buttons(tenant_id, from_number, msg, 
-                                          [{"id": "loc_confirm_yes", "title": "Haan, Yahi ✅"}, 
-                                           {"id": "loc_confirm_no", "title": "Nahi, Galat ❌"}], wa_token)
-                    chat_hist.append({"role": "user", "content": msg_body})
-                    chat_hist.append({"role": "assistant", "content": msg})
-                    session["chat_history"] = chat_hist[-50:]
-                    save_user_session(from_number, tenant_id, session)
-                    return
+                    loc_lower = loc.lower()
+                    is_known_valid = loc_lower in KARACHI_AREAS or any(
+                        loc_lower.startswith(area) or area.startswith(loc_lower) 
+                        for area in KARACHI_AREAS if len(area) > 3
+                    )
+                    
+                    if is_known_valid:
+                        # ✅ Known valid Karachi area → accept directly, no confirmation needed
+                        session["location"] = loc
+                        
+                        # Check if this location has sub-variants that user didn't specify
+                        sub_info = LOCATION_SUB_VARIANTS.get(loc_lower)
+                        if sub_info and not _location_already_specific(msg_body.lower(), loc_lower):
+                            # User gave generic location (e.g. "DHA" without phase)
+                            # Set pending flag — bot will ask sub-variant with next question
+                            session["sub_location_pending"] = True
+                            session["sub_location_prompt"] = sub_info["prompt"]
+                            logger.info(f"📍 Location '{loc}' accepted. Sub-variant pending: {sub_info['prompt']}")
+                        else:
+                            # User already gave specific sub-location (e.g. "DHA Phase 5")
+                            # Or location has no sub-variants
+                            session["sub_location_pending"] = False
+                            session["sub_location_prompt"] = None
+                            if sub_info and _location_already_specific(msg_body.lower(), loc_lower):
+                                specific = _get_specific_sublocation(msg_body.lower(), loc_lower)
+                                if specific:
+                                    session["location"] = specific
+                                    logger.info(f"📍 Specific sub-location detected: '{specific}'")
+                    else:
+                        # ❓ Unknown/suspicious location → ask for confirmation
+                        session["pending_location"] = loc
+                        session["location_confirm_pending"] = True
+                        session["funnel_state"] = "AWAITING_LOC_CONFIRM"
+                        action_word = "bechna" if session.get("purpose") == "sell" else "dekhna"
+                        msg = f"Aapne *{loc}* bataya hai. Kya aap waqai yahan property {action_word} chahte hain? 📍"
+                        send_whatsapp_buttons(tenant_id, from_number, msg, 
+                                              [{"id": "loc_confirm_yes", "title": "Haan, Yahi ✅"}, 
+                                               {"id": "loc_confirm_no", "title": "Nahi, Galat ❌"}], wa_token)
+                        chat_hist.append({"role": "user", "content": msg_body})
+                        chat_hist.append({"role": "assistant", "content": msg})
+                        session["chat_history"] = chat_hist[-50:]
+                        save_user_session(from_number, tenant_id, session)
+                        return
                 elif loc: 
                     session["location"] = loc
 
