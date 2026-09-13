@@ -74,7 +74,7 @@ def get_user_session(phone: str, tenant_id: str):
         "budget": None, "user_name": None, "state": None, "funnel_state": None, 
         "awaiting_confirmation": False, "search_confirmed": False, "chat_history": [], 
         "active_property": None, "sent_properties": [], "archived_intents": [], "last_interaction": time.time(),
-        "name_confirm_pending": False, "pending_new_name": None,
+        "name_confirm_pending": False, "pending_new_name": None, "name_last_changed": 0,
         "sub_location": None, "sub_location_pending": False, "sub_location_prompt": None
     }
     try:
@@ -2433,6 +2433,7 @@ def process_whatsapp_data(data: dict):
                         session["funnel_state"] = None
                         session["pending_new_name"] = None
                         session["name_confirm_pending"] = False
+                        session["name_last_changed"] = time.time()
                         ai_reply = f"Theek hai! Aapka naam *'{old_name}'* hi rahega. Koi aur madad chahiye? 😊"
 
                     elif btn_id == "confirm_new_name":
@@ -2459,6 +2460,7 @@ def process_whatsapp_data(data: dict):
                         session["funnel_state"] = None
                         session["pending_new_name"] = None
                         session["name_confirm_pending"] = False
+                        session["name_last_changed"] = time.time()
                         crm = GoogleSheetCRM(tenant_config.get("property_sheet_name", ""))
                         crm.update_lead_name(from_number, pending_name)
                         if session.get("purpose") == "sell":
@@ -2474,6 +2476,7 @@ def process_whatsapp_data(data: dict):
                         session["funnel_state"] = None
                         session["pending_new_name"] = None
                         session["name_confirm_pending"] = False
+                        session["name_last_changed"] = time.time()
                         ai_reply = f"Theek hai! Aapka naam *'{old_name}'* hi rahega. Koi aur madad chahiye? 😊"
 
                     elif btn_id == "loc_confirm_yes":
@@ -2609,6 +2612,7 @@ def process_whatsapp_data(data: dict):
                         session["funnel_state"] = None
                         session["pending_new_name"] = None
                         session["name_confirm_pending"] = False
+                        session["name_last_changed"] = time.time()
                         keep_msg = f"Theek hai! Aapka naam *'{old_name}'* hi rahega. Koi aur madad chahiye? 😊"
                         send_whatsapp_text(tenant_id, from_number, keep_msg, wa_token)
                         chat_hist.append({"role": "user", "content": msg_body})
@@ -2652,6 +2656,7 @@ def process_whatsapp_data(data: dict):
                         session["funnel_state"] = None
                         session["pending_new_name"] = None
                         session["name_confirm_pending"] = False
+                        session["name_last_changed"] = time.time()
                         # Update sheet
                         crm = GoogleSheetCRM(tenant_config.get("property_sheet_name", ""))
                         crm.update_lead_name(from_number, pending_name)
@@ -2669,6 +2674,7 @@ def process_whatsapp_data(data: dict):
                         session["funnel_state"] = None
                         session["pending_new_name"] = None
                         session["name_confirm_pending"] = False
+                        session["name_last_changed"] = time.time()
                         cancel_msg = f"Theek hai! Aapka naam *'{session.get('user_name', '')}' * hi rahega. Koi aur sawal? 😊"
                         send_whatsapp_text(tenant_id, from_number, cancel_msg, wa_token)
                         chat_hist.append({"role": "user", "content": msg_body})
@@ -2835,28 +2841,48 @@ def process_whatsapp_data(data: dict):
                             old_name_in_session.lower() != new_name_from_llm.lower()
                         )
                         if names_differ:
-                            # Name changed — trigger confirmation flow
-                            session["pending_new_name"] = new_name_from_llm
-                            session["name_confirm_pending"] = True
-                            session["funnel_state"] = "AWAITING_NAME_CONFIRMATION"
-                            ask_msg = (
-                                f"Janab, aapne pehle *'{old_name_in_session}'* naam bataya tha, "
-                                f"aur ab *'{new_name_from_llm}'* bata rahe hain. "
-                                f"Konsa naam confirm karein? 🤔"
-                            )
-                            send_whatsapp_buttons(
-                                tenant_id, from_number, ask_msg,
-                                [{"id": "confirm_old_name", "title": f"Pehla: {old_name_in_session[:15]}"},
-                                 {"id": "confirm_new_name", "title": f"Naya: {new_name_from_llm[:15]}"}],
-                                wa_token
-                            )
-                            chat_hist.append({"role": "user", "content": msg_body})
-                            chat_hist.append({"role": "assistant", "content": ask_msg})
-                            session["chat_history"] = chat_hist[-50:]
-                            save_chat_history(from_number, tenant_id, "user", msg_body)
-                            save_chat_history(from_number, tenant_id, "assistant", ask_msg)
-                            save_user_session(from_number, tenant_id, session)
-                            continue  # Skip rest of LLM processing for this message
+                            # User already has a name, check if they explicitly want to change it
+                            name_change_keywords = ["mera nam", "mera naam", "mera name", "name change", "naam change", "nam change", "badlo", "badal", "my name", "i am", "naam tabdeel", "name update"]
+                            name_change_intent = any(kw in msg_body.lower() for kw in name_change_keywords)
+                            
+                            if name_change_intent:
+                                last_changed = session.get("name_last_changed", 0)
+                                if time.time() - last_changed < 48 * 3600:
+                                    # Locked
+                                    lock_msg = "Security reasons ki wajah se agle 48 hours ke liye aapka naam yahi rahega, us ke baad aap change kar sakein ge. 🔒"
+                                    send_whatsapp_text(tenant_id, from_number, lock_msg, wa_token)
+                                    chat_hist.append({"role": "user", "content": msg_body})
+                                    chat_hist.append({"role": "assistant", "content": lock_msg})
+                                    session["chat_history"] = chat_hist[-50:]
+                                    save_chat_history(from_number, tenant_id, "user", msg_body)
+                                    save_chat_history(from_number, tenant_id, "assistant", lock_msg)
+                                    save_user_session(from_number, tenant_id, session)
+                                    continue
+                                else:
+                                    # Name changed — trigger confirmation flow
+                                    session["pending_new_name"] = new_name_from_llm
+                                    session["name_confirm_pending"] = True
+                                    session["funnel_state"] = "AWAITING_NAME_CONFIRMATION"
+                                    ask_msg = (
+                                        f"Janab, aapne pehle *'{old_name_in_session}'* naam bataya tha, "
+                                        f"aur ab *'{new_name_from_llm}'* bata rahe hain. "
+                                        f"Konsa naam confirm karein? 🤔"
+                                    )
+                                    send_whatsapp_buttons(
+                                        tenant_id, from_number, ask_msg,
+                                        [{"id": "confirm_old_name", "title": f"{old_name_in_session[:15]}"},
+                                         {"id": "confirm_new_name", "title": f"{new_name_from_llm[:15]}"}],
+                                        wa_token
+                                    )
+                                    chat_hist.append({"role": "user", "content": msg_body})
+                                    chat_hist.append({"role": "assistant", "content": ask_msg})
+                                    session["chat_history"] = chat_hist[-50:]
+                                    save_chat_history(from_number, tenant_id, "user", msg_body)
+                                    save_chat_history(from_number, tenant_id, "assistant", ask_msg)
+                                    save_user_session(from_number, tenant_id, session)
+                                    continue  # Skip rest of LLM processing for this message
+                            else:
+                                pass # Ignore the new name from LLM, no explicit intent
                         else:
                             session["user_name"] = new_name_from_llm
                     # ────────────────────────────────────────────────────────
