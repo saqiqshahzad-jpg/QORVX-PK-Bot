@@ -1841,7 +1841,9 @@ OUTPUT ONLY JSON.
 
 RULES:
 
-1. KARACHI-ONLY RULE: You deal ONLY in Karachi. If user mentions ANY other city (Lahore, Islamabad, Rawalpindi, Peshawar, Multan, Quetta, Faisalabad, Hyderabad, Vancouver, Dubai, London, etc.) → politely say ONCE: "Janab, main sirf Karachi ki properties mein deal karta hoon. Agar aap Karachi mein kisi area mein property dekhna chahte hain toh batayein! 🏠" Do NOT set location to any non-Karachi city. Do NOT ask "aap Karachi, Lahore, Islamabad mein se kahan?" — you ONLY operate in Karachi, so when asking location, ask: "Karachi ke kis area mein dekhna chahte hain? (jaise DHA, Clifton, Gulshan, Bahria Town, etc.)" If they mention a Karachi area (DHA, Clifton, Gulshan-e-Iqbal, North Nazimabad, PECHS, Bahria Town Karachi, FB Area, Gulberg, Malir, Scheme 33, Surjani, Korangi, Landhi, Saddar, Defence View, etc.) → accept it as location.
+1. KARACHI-ONLY RULE: You deal ONLY in Karachi. If user mentions ANY other city (Lahore, Islamabad, Rawalpindi, Peshawar, Multan, Quetta, Faisalabad, Hyderabad, Vancouver, Dubai, London, etc.) → politely say ONCE: "Janab, main sirf Karachi ki properties mein deal karta hoon. Agar aap Karachi mein kisi area mein property dekhna chahte hain toh batayein! 🏠" Do NOT set location to any non-Karachi city.
+CRITICAL: If the system has already extracted a `location` in the CURRENT SESSION STATE, it means the location HAS BEEN VERIFIED by the backend as a valid Karachi area (e.g., DHA is valid). In this case, DO NOT trigger this rule. Accept it as a valid Karachi location and proceed to the next step.
+Do NOT ask "aap Karachi, Lahore, Islamabad mein se kahan?" — you ONLY operate in Karachi, so when asking location, ask: "Karachi ke kis area mein dekhna chahte hain? (jaise DHA, Clifton, Gulshan, Bahria Town, etc.)" If they mention a Karachi area (DHA, Clifton, Gulshan-e-Iqbal, North Nazimabad, PECHS, Bahria Town Karachi, FB Area, Gulberg, Malir, Scheme 33, Surjani, Korangi, Landhi, Saddar, Defence View, etc.) → accept it as location.
 
 2. CHAT HISTORY INTELLIGENCE (CRITICAL): When the user claims "mein bata chuka hu", "mein ne bata di", "pehle bata dia", "already told you", "mein ne location bata di hai" etc., you MUST carefully review the ENTIRE chat history in the CURRENT SESSION STATE. Check if the user actually provided that information earlier. TWO OUTCOMES:
    → If user DID provide it: Find the exact value from chat history, lock it in, apologize naturally (e.g., "Are haan Janab, maafi chahta hoon! Aapne [value] bataya tha, bilkul theek hai 😊"), and proceed to ask the NEXT missing requirement in the same message.
@@ -1856,7 +1858,7 @@ RULES:
 
 6. INTENT RULES: Set intent="search" ONLY when: (A) ALL requirements gathered, OR (B) user stubbornly insists after being asked. NEVER set search on first message if requirements missing — use "qa" first. If ACTIVE PROPERTY DETAILS provided → answer from it only. Multiple properties sent but none selected → ask user to clarify via image reply or last 2 digits of ID.
 
-7. VISIT FLOW: User wants to visit → intent: "visit", funnel_state: "AWAITING_VISIT_INFO". NEVER ask date/time/phone. Only need NAME. One property sent → auto-select. Multiple → ask for ID's last 2 digits + name.
+7. VISIT FLOW: User wants to visit → intent: "visit", funnel_state: "AWAITING_VISIT_INFO". NEVER ask date/time/phone. Only need NAME. One property sent → auto-select. Multiple → ask for ID's last 2 digits + name. IF user asks a question instead of giving name, answer the question and politely remind them to provide their full name if they still want to visit.
 
 8. LANGUAGE: STRICTLY Roman Urdu in English alphabet. NEVER Arabic/Urdu script. NO Hindi (Kripya/Namaste/Dhanyawad). Use Baraye meharbani, Assalam o Alaikum, Shukriya. ALWAYS use emojis ✨. When asking property type, mention "Portion" in options.
 
@@ -2379,36 +2381,60 @@ def process_whatsapp_data(data: dict):
 
                 # Lead Capture Booking Engine
                 if session.get("funnel_state") == "AWAITING_VISIT_INFO":
-                    sent_props = session.get("sent_properties", [])
-                    matches = re.findall(r'\b\d{2}\b', msg_body)
-                    found_id = session.get("active_property")
-                    
-                    if not found_id and matches:
-                        for m in matches:
-                            for sp in sent_props:
-                                pid = str(sp.get("ID", ""))
-                                if pid.endswith(m):
-                                    found_id = pid
-                                    break
-                    
-                    if not found_id and len(sent_props) > 1:
-                        # Couldn't find ID, ask again
-                        send_whatsapp_text(tenant_id, from_number, "Maazrat, mujhe property ID samajh nahi aayi. Baraye meherbani property ID ke aakhri 2 digits lazmi likhein.", wa_token)
+                    # Verify if user provided a name or asked a question
+                    verification_prompt = f"""User was asked to provide their FULL NAME to schedule a property visit.
+User's reply: "{msg_body}"
+
+Is the user providing their name (or confirming/agreeing to visit), OR are they asking a question/saying something else?
+If it's just a name or a greeting+name, return true. If it's a question about the property or something else, return false.
+Respond in JSON format only:
+{{"is_name": boolean}}
+"""
+                    is_name = True
+                    try:
+                        res = chat_completion_fallback([
+                            {"role": "system", "content": "You are a helpful JSON-only assistant."},
+                            {"role": "user", "content": verification_prompt}
+                        ])
+                        ver_data = extract_clean_json(res)
+                        is_name = ver_data.get("is_name", True)
+                    except Exception as e:
+                        logger.error(f"LLM verification failed for visit info: {e}")
+
+                    if is_name:
+                        sent_props = session.get("sent_properties", [])
+                        matches = re.findall(r'\b\d{2}\b', msg_body)
+                        found_id = session.get("active_property")
+                        
+                        if not found_id and matches:
+                            for m in matches:
+                                for sp in sent_props:
+                                    pid = str(sp.get("ID", ""))
+                                    if pid.endswith(m):
+                                        found_id = pid
+                                        break
+                        
+                        if not found_id and len(sent_props) > 1:
+                            # Couldn't find ID, ask again
+                            send_whatsapp_text(tenant_id, from_number, "Maazrat, mujhe property ID samajh nahi aayi. Baraye meherbani property ID ke aakhri 2 digits lazmi likhein.", wa_token)
+                            save_user_session(from_number, tenant_id, session)
+                            return
+                            
+                        # Extract Name (Remove the digits from text)
+                        name = re.sub(r'\b\d{2}\b', '', msg_body).strip()
+                        if not name: name = "Janab"
+                        
+                        crm = GoogleSheetCRM(tenant_config.get("property_sheet_name", ""))
+                        crm.append_lead(from_number, name.title(), found_id or "Unknown")
+                        session["funnel_state"] = "COMPLETED"
+                        
+                        save_msg = "Aapka message hamare agent tak chala gaya hai! Hum jald hi aapse visit ke hawale se raabta karenge. Shukriya! 🤝"
+                        send_whatsapp_text(tenant_id, from_number, save_msg, wa_token)
                         save_user_session(from_number, tenant_id, session)
                         return
-                        
-                    # Extract Name (Remove the digits from text)
-                    name = re.sub(r'\b\d{2}\b', '', msg_body).strip()
-                    if not name: name = "Janab"
-                    
-                    crm = GoogleSheetCRM(tenant_config.get("property_sheet_name", ""))
-                    crm.append_lead(from_number, name.title(), found_id or "Unknown")
-                    session["funnel_state"] = "COMPLETED"
-                    
-                    save_msg = "Aapka message hamare agent tak chala gaya hai! Hum jald hi aapse visit ke hawale se raabta karenge. Shukriya! 🤝"
-                    send_whatsapp_text(tenant_id, from_number, save_msg, wa_token)
-                    save_user_session(from_number, tenant_id, session)
-                    return
+                    else:
+                        logger.info(f"User asked a question during visit flow instead of providing name: {msg_body}")
+                        # Do not return here, let the normal LLM flow answer the question!
 
                 # Interactive Fast-Track
                 if btn_id:
