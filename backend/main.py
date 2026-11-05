@@ -244,6 +244,35 @@ def sanitize_and_extract(text: str) -> tuple:
     cleaned_text = " ".join(cleaned_words).strip()
     return cleaned_text, had_abuses
 
+# Karachi geographical clusters to prevent inappropriate cross-city recommendations
+LOCATION_CLUSTERS = {
+    "south_prime": [
+        "dha", "defence", "defense", "defens", "clifton", "bath island", "civil lines", "gizri",
+        "sea view", "seaview", "do darya", "boat basin", "zamzama", "defence view", "pechs", "smchs", "kda scheme 1"
+    ],
+    "central": [
+        "gulshan", "gulshan-e-iqbal", "johar", "gulistan-e-johar", "fb area",
+        "federal b area", "north nazimabad", "nazimabad", "liaquatabad", "gulberg",
+        "buffer zone", "karimabad", "ancholi", "aisha manzil"
+    ],
+    "east_highway": [
+        "scheme 33", "mosamiyat", "mausamiyat", "mosmiyat", "mausmiyat", "safoora", "safoora goth", "malir",
+        "malir cantt", "model colony", "shah faisal", "airport", "university road"
+    ],
+    "bahria": [
+        "bahria", "bahria town", "bahria town karachi"
+    ],
+    "dha_city": [
+        "dha city", "dha city karachi", "dck"
+    ],
+    "north_surjani": [
+        "surjani", "surjani town", "north karachi", "new karachi", "manghopir"
+    ],
+    "industrial_coastal": [
+        "korangi", "landhi", "maripur", "hawksbay"
+    ]
+}
+
 # =========================================================================================
 # GOOGLE SHEETS CRM
 # =========================================================================================
@@ -582,16 +611,24 @@ class GoogleSheetCRM:
                 
                 score = 0
                 
-                # Location Score
+                # Location Compatibility & Score (STRICT: Never recommend cross-cluster e.g. Liaquatabad for Defense)
                 if location:
-                    loc_lower = location.lower()
-                    if loc_lower in r_society or loc_lower in r_city:
+                    loc_lower = location.lower().strip()
+                    r_comb_loc = f"{r_society} {r_city}".lower()
+                    
+                    direct_match = loc_lower in r_comb_loc or any(len(w) > 2 and w in r_comb_loc for w in loc_lower.split())
+                    user_clusters = [c_name for c_name, areas in LOCATION_CLUSTERS.items() if any(a in loc_lower for a in areas)]
+                    prop_clusters = [c_name for c_name, areas in LOCATION_CLUSTERS.items() if any(a in r_comb_loc for a in areas)]
+                    cluster_match = bool(set(user_clusters) & set(prop_clusters))
+                    
+                    if not direct_match and not cluster_match:
+                        # Alien location candidate — skip entirely!
+                        continue
+                    
+                    if direct_match:
                         score += 50
-                    else:
-                        # Check partial word match (e.g., just "DHA")
-                        loc_words = loc_lower.split()
-                        if any(len(w) > 2 and (w in r_society or w in r_city) for w in loc_words):
-                            score += 20
+                    elif cluster_match:
+                        score += 25
 
                 # Property Type Score
                 if property_type and property_type.lower() in r_type:
@@ -643,7 +680,7 @@ class GoogleSheetCRM:
                 loc = f"{phase}, {r.get('Society_Area', '')}, {r.get('City', '')}"
             else:
                 loc = f"{r.get('Society_Area', '')}, {r.get('City', '')}"
-            price = f"{r.get('Demand_PKR', 'N/A')}"
+            price = format_price_pk(r.get('Demand_PKR', 'N/A'))
             
             poss = str(r.get('Possession', '-')).strip()
             poss_text = "🔥 Brand New, Ready" if poss.lower() == "ready" else f"💎 Premium, {poss}"
@@ -671,8 +708,89 @@ class GoogleSheetCRM:
             logger.error(f"search_similar_properties error: {e}")
             return None
 
-def format_search_confirmation(session):
+def format_price_pk(val, is_urdu=False):
+    if not val:
+        return "N/A"
+    try:
+        clean_val = str(val).lower().replace(",", "").replace("rs", "").replace("pkr", "").strip()
+        num = int(float(clean_val))
+    except Exception:
+        return str(val)
+
+    if num >= 10000000:
+        crores = num / 10000000
+        if crores == int(crores):
+            c_int = int(crores)
+            return f"{c_int} کروڑ" if is_urdu else f"{c_int} Crore"
+        c_part = int(num // 10000000)
+        rem_lakhs = int(round((num % 10000000) / 100000))
+        if rem_lakhs > 0:
+            return f"{c_part} کروڑ {rem_lakhs} لاکھ" if is_urdu else f"{c_part} Crore {rem_lakhs} Lakh"
+        return f"{c_part} کروڑ" if is_urdu else f"{c_part} Crore"
+    elif num >= 100000:
+        lakhs = num / 100000
+        if lakhs == int(lakhs):
+            l_int = int(lakhs)
+            return f"{l_int} لاکھ" if is_urdu else f"{l_int} Lakh"
+        l_part = int(num // 100000)
+        rem_hazar = int(round((num % 100000) / 1000))
+        if rem_hazar > 0:
+            return f"{l_part} لاکھ {rem_hazar} ہزار" if is_urdu else f"{l_part} Lakh {rem_hazar} Hazar"
+        return f"{l_part} لاکھ" if is_urdu else f"{l_part} Lakh"
+    elif num >= 1000:
+        hazar = num / 1000
+        if hazar == int(hazar):
+            h_int = int(hazar)
+            return f"{h_int} ہزار" if is_urdu else f"{h_int} Hazar"
+        return f"{hazar:.1f} ہزار" if is_urdu else f"{hazar:.1f} Hazar"
+    else:
+        return f"{num:,}"
+
+def format_search_confirmation(session, is_urdu=False):
     is_sell = session.get("purpose") == "sell"
+    b_val = session.get("budget")
+    budget = format_price_pk(b_val, is_urdu=is_urdu) if b_val else "-"
+
+    if is_urdu:
+        maqsad_map = {"buy": "خریدنا", "sell": "بیچنا", "rent": "کرایہ"}
+        type_map = {"house": "مکان / گھر", "flat": "فلیٹ", "portion": "پورشن", "plot": "پلاٹ", "warehouse": "گودام"}
+        maqsad = maqsad_map.get(session.get("purpose", ""), "خریدنا")
+        loc = str(session.get("location", "-"))
+        ptype = type_map.get(str(session.get("property_type", "")).lower(), str(session.get("property_type", "-")))
+        bhk = f"{session.get('bhk')} بیڈ رومز" if session.get("bhk") else "-"
+
+        text = "بہترین! آپ کی پراپرٹی تفصیلات درج ذیل ہیں:\n\n" if is_sell else "بہترین! آپ کی سرچ کی تفصیلات درج ذیل ہیں:\n\n"
+        text += f"🎯 مقصد: {maqsad}\n"
+        text += f"📍 علاقہ: {loc}\n"
+        text += f"🏢 پراپرٹی کی قسم: {ptype}\n"
+        if ptype in ["پلاٹ", "گودام"]:
+            text += f"📐 سائز: {session.get('size', '-')}\n"
+        else:
+            text += f"🛏️ بیڈ رومز: {bhk}\n"
+        
+        if is_sell:
+            text += f"💰 ڈیمانڈ: {budget}\n"
+            if session.get("user_name"):
+                text += f"👤 نام: {session.get('user_name')}\n"
+        else:
+            text += f"💰 بجٹ: {budget}\n"
+
+        missing = []
+        if not session.get("purpose"): missing.append("مقصد")
+        if not session.get("location"): missing.append("علاقہ")
+        if not session.get("property_type"): missing.append("پراپرٹی کی قسم")
+        if ptype not in ["پلاٹ", "گودام"] and not session.get("bhk"): missing.append("بیڈ رومز")
+        if ptype in ["پلاٹ", "گودام"] and not session.get("size"): missing.append("سائز")
+        if not session.get("budget"): missing.append("بجٹ")
+
+        if missing:
+            missing_str = "، ".join(missing)
+            text += f"\n💡 نوٹ: آپ نے ابھی تک *{missing_str}* نہیں بتایا۔ کیا ہم انہی تفصیلات پر سرچ شروع کریں؟"
+        else:
+            text += "\nکیا آپ ان تفصیلات کو کنفرم کرتے ہیں؟"
+        return text
+
+    # Default: Roman Urdu
     maqsad_map = {"buy": "Kharidna", "sell": "Bechna", "rent": "Rent"}
     maqsad = maqsad_map.get(session.get("purpose", ""), str(session.get("purpose", "-")).title())
     
@@ -683,16 +801,6 @@ def format_search_confirmation(session):
     if ptype.lower() not in ["plot", "warehouse", "zameen", "-"]:
         bhk = f"{session.get('bhk')} Bedrooms" if session.get("bhk") else "-"
         
-    budget = "-"
-    if session.get("budget"):
-        b_val = session["budget"]
-        if b_val >= 10000000:
-            budget = f"{b_val / 10000000:g} Crore"
-        elif b_val >= 100000:
-            budget = f"{b_val / 100000:g} Lakh"
-        else:
-            budget = str(b_val)
-            
     text = f"Behtareen! Aapki property details yeh hain:\n\n" if is_sell else f"Behtareen! Aapki search details yeh hain:\n\n"
     text += f"🎯 Maqsad: {maqsad}\n"
     text += f"📍 Location: {loc}\n"
@@ -843,7 +951,8 @@ def execute_property_search(session, tenant_config, wa_token, from_number, tenan
         p = properties[0]
         
         title = p.get('Title', f"Property 1")
-        price = p.get('Price', 'N/A')
+        raw_p = p.get('Price', 'N/A')
+        price = format_price_pk(raw_p) if raw_p and raw_p != 'N/A' else raw_p
         loc = p.get('Location', session.get('location', 'N/A'))
         desc = p.get('Description', '')
         prop_id = p.get('ID', f"ID-1")
@@ -861,12 +970,17 @@ def execute_property_search(session, tenant_config, wa_token, from_number, tenan
         # Send TEXT with details first
         msg_id = send_whatsapp_text(tenant_id, from_number, caption, wa_token)
         
-        if images:
+        valid_images = [
+            img for img in images 
+            if img and str(img).startswith("http") and "[link" not in str(img).lower() and "placeholder" not in str(img).lower()
+        ]
+        
+        if valid_images:
             # Send wait message
             send_whatsapp_text(tenant_id, from_number, "Thora wait karein, main iski images bhej raha hu... 🖼️", wa_token)
             
             # Send IMAGES sequentially (Limit to 3 to prevent massive delays)
-            for img_url in images[:3]:
+            for img_url in valid_images[:3]:
                 send_whatsapp_image(tenant_id, from_number, img_url, "", wa_token)
                 time.sleep(0.5)
             
@@ -883,7 +997,7 @@ def execute_property_search(session, tenant_config, wa_token, from_number, tenan
         # 🚀 CRM Push: Push Warm (Inquiry) Lead to Google Sheet
         try:
             b_val = session.get("budget")
-            budget_str = f"Rs {b_val:,}" if isinstance(b_val, (int, float)) else str(b_val or "N/A")
+            budget_str = f"Rs {format_price_pk(b_val)}" if b_val else "N/A"
             crm.upsert_buyer_lead(
                 phone=from_number,
                 name=session.get("user_name") or "Customer",
@@ -929,14 +1043,15 @@ def execute_property_search(session, tenant_config, wa_token, from_number, tenan
         
         if rec:
             session["recommended_property"] = rec
-            b_diff = f"Demand Rs {rec.get('Raw_Budget')} hai"
+            b_diff = f"Demand {format_price_pk(rec.get('Raw_Budget'))} hai"
             if rec.get("Raw_BHK") and str(session.get("bhk")) != str(rec.get("Raw_BHK")):
-                b_diff = f"ismein {rec.get('Raw_BHK')} bedrooms hain"
+                b_diff = f"ismein {rec.get('Raw_BHK')} bedrooms hain aur {b_diff}"
+            rec_loc = rec.get("Location") or session.get("location") or "Karachi"
                 
             if sent_props:
-                msg = f"Janab aapki exact requirements ke mutabiq abhi yahi property thi jo main bhej chuka hu. Kher us se milta julta ek aur option mila hai jismein {b_diff}. Agar kahein to mein wo dikhaun? Ya aap requirements change karna chahte hain?"
+                msg = f"Janab aapki exact requirements ke mutabiq abhi yahi property thi jo main bhej chuka hu. Kher us se milta julta ek aur option ({rec_loc}) mila hai jismein {b_diff}. Agar kahein to mein wo dikhaun? Ya aap requirements change karna chahte hain?"
             else:
-                msg = f"Janab aapki requirements ke mutabiq exact match nahi mila, kher us se milta julta ek behtareen option mila hai jismein {b_diff}. Agar kahein to mein wo dikhaun? Ya aap requirements change karna chahte hain?"
+                msg = f"Janab aapki exact requirements ke mutabiq match nahi mila, kher us se milta julta ek behtareen option ({rec_loc}) mila hai jismein {b_diff}. Agar kahein to mein wo dikhaun? Ya aap requirements change karna chahte hain?"
                 
             send_whatsapp_buttons(tenant_id, from_number, msg, ["Haan, dikhao ✨", "Change Req 🔄"], wa_token)
             chat_hist.append({"role": "assistant", "content": msg})
@@ -952,20 +1067,81 @@ def execute_property_search(session, tenant_config, wa_token, from_number, tenan
 # =========================================================================================
 # NLP PARAMETER EXTRACTION
 # =========================================================================================
+# Number words mapping (Urdu, Hindi, Roman Urdu, English)
+WORD_TO_NUM = {
+    "ek": 1, "aik": 1, "one": 1, "ایک": 1, "एक": 1,
+    "sawa": 1.25, "سوا": 1.25, "सवा": 1.25,
+    "dedh": 1.5, "derh": 1.5, "deedh": 1.5, "ڈیڑھ": 1.5, "डेढ़": 1.5,
+    "do": 2, "two": 2, "doo": 2, "دو": 2, "दो": 2,
+    "dhai": 2.5, "dhaai": 2.5, "dhaye": 2.5, "ڈھائی": 2.5, "ढाई": 2.5,
+    "teen": 3, "tin": 3, "three": 3, "تین": 3, "तीन": 3,
+    "char": 4, "chaar": 4, "four": 4, "چار": 4, "चार": 4,
+    "panch": 5, "paanch": 5, "five": 5, "پانچ": 5, "पाँच": 5, "पांच": 5,
+    "che": 6, "chhay": 6, "six": 6, "چھ": 6, "छह": 6,
+    "sat": 7, "saat": 7, "seven": 7, "سات": 7, "सात": 7,
+    "aath": 8, "ath": 8, "eight": 8, "آٹھ": 8, "आठ": 8,
+    "nau": 9, "no": 9, "nine": 9, "نو": 9, "नौ": 9,
+    "das": 10, "dus": 10, "ten": 10, "دس": 10, "दस": 10,
+    "barah": 12, "bara": 12, "بارہ": 12, "बारह": 12,
+    "pandrah": 15, "pandra": 15, "پندرہ": 15, "पंद्रह": 15,
+    "bees": 20, "bis": 20, "بیس": 20, "बीस": 20,
+    "pachees": 25, "pachis": 25, "پچیس": 25, "पच्चीस": 25,
+    "tees": 30, "tis": 30, "تیس": 30, "तीस": 30,
+    "chalees": 40, "chalis": 40, "چالیس": 40, "चालीस": 40,
+    "pachas": 50, "pachaas": 50, "پچاس": 50, "पचास": 50,
+    "saath": 60, "sath": 60, "ساٹھ": 60, "साठ": 60,
+    "sattar": 70, "ستر": 70, "सत्तर": 70,
+    "assi": 80, "اسی": 80, "अस्सी": 80,
+    "nabbay": 90, "nave": 90, "نوے": 90, "नब्बे": 90,
+    "sau": 100, "so": 100, "سو": 100, "सौ": 100,
+}
+
+CRORE_WORDS = ["crore", "crores", "karor", "karors", "cr", "کروڑ", "करोड़", "करोर"]
+LAKH_WORDS = ["lakh", "lakhs", "lac", "lacs", "لاکھ", "लाख"]
+HAZAR_WORDS = ["hazar", "hazaar", "k", "ہزار", "हज़ार"]
+MILLION_WORDS = ["million", "mn", "m"]
+
 def parse_south_asian_budget(text: str):
-    text = text.lower().replace(",", "")
-    # Strict word boundary so "8 mein" does NOT match "m"
-    match = re.search(r'\b(\d*\.\d+|\d+)\s*(lacs?|lakhs?|crores?|karors?|cr|million|mn|m|k|pkr)\b', text)
-    if not match:
-        digits = re.search(r'\b(\d{5,10})\b', text)
-        return int(digits.group(1)) if digits else None
-    
-    val, unit = float(match.group(1)), match.group(2)
-    if unit in ['lac', 'lacs', 'lakh', 'lakhs']: return int(val * 100000)
-    if unit in ['crore', 'crores', 'karor', 'karors', 'cr']: return int(val * 10000000)
-    if unit == 'k': return int(val * 1000)
-    if unit in ['m', 'million', 'mn']: return int(val * 1000000)
-    return int(val)
+    if not text: return None
+    text_clean = text.lower().replace(",", "")
+
+    # 1. Check word-based number + unit (e.g. "دو کروڑ", "दो करोर", "do crore", "dedh crore")
+    for w_num, val in sorted(WORD_TO_NUM.items(), key=lambda x: len(x[0]), reverse=True):
+        for unit in CRORE_WORDS:
+            pattern = rf'(?:^|\s|[^\w]){re.escape(w_num)}\s+{re.escape(unit)}(?:$|\s|[^\w])'
+            if re.search(pattern, text_clean):
+                return int(val * 10000000)
+        for unit in LAKH_WORDS:
+            pattern = rf'(?:^|\s|[^\w]){re.escape(w_num)}\s+{re.escape(unit)}(?:$|\s|[^\w])'
+            if re.search(pattern, text_clean):
+                return int(val * 100000)
+        for unit in HAZAR_WORDS:
+            pattern = rf'(?:^|\s|[^\w]){re.escape(w_num)}\s+{re.escape(unit)}(?:$|\s|[^\w])'
+            if re.search(pattern, text_clean):
+                return int(val * 1000)
+        for unit in MILLION_WORDS:
+            pattern = rf'(?:^|\s|[^\w]){re.escape(w_num)}\s+{re.escape(unit)}(?:$|\s|[^\w])'
+            if re.search(pattern, text_clean):
+                return int(val * 1000000)
+
+    # 2. Check digits + unit (e.g. "2 crore", "20 lakh", "2کروڑ", "1.5 cr")
+    all_units = CRORE_WORDS + LAKH_WORDS + HAZAR_WORDS + MILLION_WORDS
+    units_pattern = '|'.join(re.escape(u) for u in all_units)
+    match = re.search(rf'(\d*\.\d+|\d+)\s*({units_pattern})\b', text_clean)
+    if match:
+        val = float(match.group(1))
+        unit = match.group(2)
+        if unit in CRORE_WORDS: return int(val * 10000000)
+        if unit in LAKH_WORDS: return int(val * 100000)
+        if unit in HAZAR_WORDS: return int(val * 1000)
+        if unit in MILLION_WORDS: return int(val * 1000000)
+
+    # 3. Raw digit check (5 to 10 digits e.g. 20000000)
+    digits = re.search(r'\b(\d{5,10})\b', text_clean)
+    if digits:
+        return int(digits.group(1))
+
+    return None
 
 def extract_bhk(text: str, prop_type: str, last_ai: str):
     if prop_type in ["plot", "warehouse", "zameen"]: return None
@@ -1132,8 +1308,10 @@ KARACHI_AREAS = [
     "scheme 33 sector 51", "scheme 33 sector 52",
     "scheme 33 sector 53", "scheme 33 sector 54",
 
-    # ===================== SAFOORA / SAFOORA GOTH =====================
+    # ===================== SAFOORA / MOSAMIYAT / UNIVERSITY ROAD =====================
     "safoora", "safoora goth", "safoora chowrangi", "safoora chorangi",
+    "mosamiyat", "mausamiyat", "mosmiyat", "mausmiyat", "mosmiat", "mausamiat", "mosamiyat chowrangi", "mosmiyat chowrangi",
+    "university road", "ned", "ned university", "maskan", "maskan chowrangi", "samama", "samama shopping complex",
 
     # ===================== SURJANI TOWN =====================
     "surjani", "surjani town", "surjani sector 1", "surjani sector 2",
@@ -2119,22 +2297,23 @@ OUTPUT ONLY JSON.
   "budget": integer | null,
   "user_name": "string | null",
   "funnel_state": "AWAITING_VISIT_INFO" | null,
-  "reply_text": "Professional pure Pakistani Roman Urdu response"
+  "reply_text": "Natural response mirroring the user's script (Pure Urdu script if user wrote in Urdu script; Pure Roman Urdu if user wrote in Roman Urdu; English if user wrote in English). NO SCRIPT MIXING."
 }
 
 <core_identity>
-  <scope>You ONLY deal in KARACHI properties. NOT Lahore, NOT Islamabad, NOT Peshawar, NOT Multan, NOT Quetta — ONLY KARACHI and its areas/localities. When you ask for location, you are asking for a KARACHI AREA (e.g., DHA, Clifton, Bahria Town Karachi, Gulshan-e-Iqbal, North Nazimabad, Gulberg, Malir, PECHS, Scheme 33, etc.) — NOT a city name.</scope>
+  <scope>You ONLY deal in KARACHI properties. NOT Lahore, NOT Islamabad, NOT Peshawar, NOT Multan, NOT Quetta — ONLY KARACHI and its areas/localities. When you ask for location, you are asking for a KARACHI AREA (e.g., DHA, Clifton, Bahria Town Karachi, Gulshan-e-Iqbal, North Nazimabad, Gulberg, Malir, PECHS, Scheme 33, Mosamiyat, etc.) — NOT a city name.</scope>
   <handoff>If user asks to speak to agent/visit office/finalise deal → intent: "handoff", reply: "Janab, main aapki chat apne senior agent ko assign kar raha hoon, woh abhi aapse raabta karenge."</handoff>
   <goodbye>If user says Shukriya/Thanks/Theek hai/Jazakallah to end chat → intent: "goodbye", reply naturally. Do NOT restart funnel.</goodbye>
-  <tone>Match user's language: English→English, Punjabi→Punjabi. Default: professional Roman Urdu, address as "Janab".</tone>
+  <tone>Match user's language & script: Urdu script → 100% pure Urdu script, Roman Urdu → 100% Roman Urdu, English → English. NEVER mix English and Urdu scripts in the same sentence. Address respectfully as 'Janab' (or 'جناب').</tone>
 </core_identity>"""
 
 PROMPT_CORE = PK_MASTER_PROMPT
 
 PROMPT_RULES = {
     "karachi_only": """KARACHI-ONLY RULE: You deal ONLY in Karachi. If user mentions ANY other city (Lahore, Islamabad, Rawalpindi, Peshawar, Multan, Quetta, Faisalabad, Hyderabad, Vancouver, Dubai, London, etc.) → politely say ONCE: "Janab, main sirf Karachi ki properties mein deal karta hoon. Agar aap Karachi mein kisi area mein property dekhna chahte hain toh batayein! 🏠" Do NOT set location to any non-Karachi city.
+CRITICAL: Words expressing actions or consent (such as "bhejo", "beijo", "dikhao", "bhej do", "send", "haan", "theek hai") are USER COMMANDS to show properties, NOT city or area names! NEVER treat "bhejo" or "beijo" as a location!
 CRITICAL: If the system has already extracted a `location` in the CURRENT SESSION STATE, it means the location HAS BEEN VERIFIED by the backend as a valid Karachi area (e.g., DHA is valid). In this case, DO NOT trigger this rule. Accept it as a valid Karachi location and proceed to the next step.
-Do NOT ask "aap Karachi, Lahore, Islamabad mein se kahan?" — you ONLY operate in Karachi, so when asking location, ask: "Karachi ke kis area mein dekhna chahte hain? (jaise DHA, Clifton, Gulshan, Bahria Town, etc.)" If they mention a Karachi area (DHA, Clifton, Gulshan-e-Iqbal, North Nazimabad, PECHS, Bahria Town Karachi, FB Area, Gulberg, Malir, Scheme 33, Surjani, Korangi, Landhi, Saddar, Defence View, etc.) → accept it as location.""",
+Do NOT ask "aap Karachi, Lahore, Islamabad mein se kahan?" — you ONLY operate in Karachi, so when asking location, ask: "Karachi ke kis area mein dekhna chahte hain? (jaise DHA, Clifton, Gulshan, Bahria Town, Mosamiyat, etc.)" If they mention a Karachi area (DHA, Clifton, Gulshan-e-Iqbal, North Nazimabad, PECHS, Bahria Town Karachi, FB Area, Gulberg, Malir, Scheme 33, Surjani, Korangi, Landhi, Saddar, Defence View, Mosamiyat, etc.) → accept it as location.""",
 
     "chat_history": """CHAT HISTORY INTELLIGENCE (CRITICAL): When the user claims "mein bata chuka hu", "mein ne bata di", "pehle bata dia", "already told you", "mein ne location bata di hai" etc., you MUST carefully review the ENTIRE chat history in the CURRENT SESSION STATE. Check if the user actually provided that information earlier. TWO OUTCOMES:
    → If user DID provide it: Find the exact value from chat history, lock it in, apologize naturally (e.g., "Are haan Janab, maafi chahta hoon! Aapne [value] bataya tha, bilkul theek hai 😊"), and proceed to ask the NEXT missing requirement in the same message.
@@ -2151,7 +2330,27 @@ Do NOT ask "aap Karachi, Lahore, Islamabad mein se kahan?" — you ONLY operate 
 
     "visit_flow": """VISIT FLOW: User wants to visit a property that was already sent → intent: "visit", funnel_state: "AWAITING_VISIT_INFO". CRITICAL: NEVER set intent to "visit" or funnel_state to "AWAITING_VISIT_INFO" if no properties have been sent yet (when sent_properties is empty). If user has not seen properties yet, focus on collecting their missing requirements (location, budget, type) and searching properties first! When properties are sent: One property sent → auto-select. Multiple → ask for ID's last 2 digits + name. IF user asks a question instead of giving name, answer the question and politely remind them to provide their full name if they still want to visit.""",
 
-    "language": """LANGUAGE: STRICTLY Roman Urdu in English alphabet. NEVER Arabic/Urdu script. NO Hindi (Kripya/Namaste/Dhanyawad). Use Baraye meharbani, Assalam o Alaikum, Shukriya. ALWAYS use emojis ✨. When asking property type, mention "Portion" in options.""",
+    "language": """LANGUAGE & SCRIPT (CRITICAL):
+- Strictly mirror the user's script:
+  * If the user writes in Arabic/Urdu script (اردو رسم الخط جیسے: سلام، گھر، دو کروڑ), your response MUST BE 100% in pure Urdu script. NEVER mix English/Latin alphabet into an Urdu script sentence!
+  * If the user writes in Roman Urdu (English alphabet, e.g. "mujhe ghar chahiye"), your response MUST BE 100% in Roman Urdu.
+  * If the user writes in English, reply in English.
+  * If the user writes in Hindi/Devanagari, reply politely in Roman Urdu or Urdu script (NEVER use Sanskritized Hindi words like Kripya/Namaste/Dhanyawad).
+- NO SCRIPT MIXING: Never mix English script and Urdu script in the same sentence or message.
+- Use warm Pakistani greetings and vocabulary: 'Assalam-o-Alaikum', 'Baraye meharbani', 'Janab', 'Shukriya'.
+- ALWAYS use emojis ✨ 🏠 📍 💰 appropriately.
+- When asking property type, mention 'Portion' among options.""",
+
+    "currency_format": """PAKISTANI CURRENCY FORMAT (STRICT):
+- Real estate prices and budgets in Pakistan MUST ALWAYS be expressed in 'Crore', 'Lakh', or 'Hazar' (or in Urdu script: 'کروڑ', 'لاکھ', 'ہزار').
+- NEVER use the word 'million' or 'billion' under any circumstances! E.g. Say '2 Crore', NEVER '20 million'. Say '50 Lakh', NEVER '5 million'. Say '1.2 Crore', NEVER '12 million' or '12000000'.
+- When displaying prices, always format nicely (e.g., 'Rs 2 Crore' or 'Rs 50 Lakh' or '۲ کروڑ روپے').""",
+
+    "dha_boundaries": """DHA KARACHI PHASES & REAL ESTATE BOUNDARIES (CRITICAL):
+- DHA Karachi has ONLY Phase 1 to Phase 8, plus DHA City Karachi (DCK).
+- NEVER list long sequences of numbers or numbers above 8 (such as 1, 2, 3 ... 100).
+- Phases 9, 10, 11, ..., 98, 99, 100 DO NOT EXIST in Karachi. NEVER hallucinate or mention nonexistent phases like 'Phase 98' or 'Phase 99'.
+- If the user asks about DHA, ask: 'DHA ke kis Phase mein? (Phase 1 se 8, ya DHA City)'.""",
 
     "location_extraction": """LOCATION EXTRACTION: Extract ONLY the core area name for location field (e.g., user says "DHA phase 5 mein yaar" → extract "DHA Phase 5"). Never include conversational words.""",
 
@@ -2180,6 +2379,8 @@ def build_dynamic_prompt(session: dict = None) -> str:
         "chat_history",
         "iron_dome",
         "language",
+        "currency_format",
+        "dha_boundaries",
         "frustrated_users"
     ])
 
@@ -2553,6 +2754,9 @@ def process_whatsapp_data(data: dict):
                     
                     hallucinations = ["subscribe", "thanks for", "subtitles", "thank you", "bye"]
                     if transcription and len(transcription.strip()) > 2 and not any(h in transcription.lower() for h in hallucinations): 
+                        # Normalize audio phonetic transcription errors for Urdu/Hindi speech
+                        transcription = re.sub(r'\b(beijo|bejo|biju)\b', 'bhejo', transcription, flags=re.IGNORECASE)
+                        transcription = re.sub(r'\b(swar)\b', 'sir', transcription, flags=re.IGNORECASE)
                         # Sanitize abuses from voice note but keep property content
                         cleaned, had_abuses = sanitize_and_extract(transcription)
                         if not cleaned:
@@ -3326,6 +3530,47 @@ Respond in JSON format only:
                     save_user_session(from_number, tenant_id, session)
                     return
 
+                # Trigger recommendation send via free text / voice note ("bhejo", "dikhao", "haan", "bhej do", etc.)
+                rec_confirm_words = [
+                    "bhejo", "beijo", "dikhao", "bhej do", "dikha do", "send", "show", "haan", "han",
+                    "bhejiye", "bhejo mujhe", "wo dikhao", "wo bhejo", "yes", "theek hai bhejo",
+                    "bhej den", "dikha dein", "bhejen", "bhejo please", "wo wali bhejo",
+                    "بھیجو", "دکھاؤ", "ہاں", "بھیج دو", "دکھا دو", "بھیجیں", "بھیجو مجھے",
+                    "भेजो", "दिखाओ", "हाँ", "भेज दो", "दिखा दो", "दिखाइए", "भेजिए"
+                ]
+                if session.get("recommended_property") and any(w in text_low for w in rec_confirm_words):
+                    logger.info(f"🔍 User confirmed recommendation via text/voice: '{msg_body}'")
+                    execute_property_search(session, tenant_config, wa_token, from_number, tenant_id, chat_hist, is_recommendation=True)
+                    session["chat_history"] = chat_hist[-50:]
+                    save_chat_history(from_number, tenant_id, "user", msg_body)
+                    save_user_session(from_number, tenant_id, session)
+                    return
+
+                # User confirms search criteria via free text / voice note
+                search_confirm_words = [
+                    "confirm", "haan", "han", "yes", "theek hai", "thik hai", "ok", "thek hai",
+                    "bhejo", "dikhao", "bhej do", "dikha do", "send", "shuru karo", "search karo",
+                    "کنفرم", "ہاں", "ٹھیک ہے", "بھیجو", "دکھاؤ", "شروع کرو", "صحیح ہے",
+                    "कन्फर्म", "हाँ", "ठीक है", "भेजो", "दिखाओ", "सर्च करो"
+                ]
+                if session.get("awaiting_confirmation") and any(w in text_low.split() or text_low == w for w in search_confirm_words):
+                    logger.info(f"🔍 User confirmed search details via text/voice: '{msg_body}'")
+                    session["search_confirmed"] = True
+                    session["awaiting_confirmation"] = False
+                    if session.get("purpose") == "sell":
+                        save_seller_lead(session, tenant_config, from_number)
+                        name = session.get("user_name") or "Janab"
+                        ai_reply = f"✨ *{name}*, aapki property ki details hamari premium listing mein aage bhej di gayi hain. Humari expert team iska deeply tajziya karegi aur jald hi behtareen kharidar (buyer) ke sath aapse raabta karegi. Shukriya! 🤝"
+                        send_whatsapp_text(tenant_id, from_number, ai_reply, wa_token)
+                        chat_hist.append({"role": "user", "content": msg_body})
+                        chat_hist.append({"role": "assistant", "content": ai_reply})
+                    else:
+                        execute_property_search(session, tenant_config, wa_token, from_number, tenant_id, chat_hist)
+                    session["chat_history"] = chat_hist[-50:]
+                    save_chat_history(from_number, tenant_id, "user", msg_body)
+                    save_user_session(from_number, tenant_id, session)
+                    return
+
                 # Visit intent detection from free text (before LLM call)
                 visit_keywords = ["visit", "dekhna", "dekho", "dikhao ghar", "ghr visit", "property visit", "visit krna", "visit karna", "milna hai", "dekhnay", "ghar dekhna"]
                 if any(kw in msg_body.lower() for kw in visit_keywords) and session.get("sent_properties"):
@@ -3666,9 +3911,16 @@ Respond in JSON format only:
                     if "bedrooms" in parsed and parsed["bedrooms"] is not None:
                         parsed["bhk"] = parsed.pop("bedrooms")
 
-                    # Prevent LLM hallucination of budget if user never mentioned any numbers/budget
-                    if parsed.get("budget") is not None and not parse_south_asian_budget(msg_body) and not session.get("budget"):
-                        parsed["budget"] = None
+                    # Advanced Multi-lingual Budget Lock:
+                    budget_from_nlp = parse_south_asian_budget(msg_body)
+                    if budget_from_nlp:
+                        parsed["budget"] = budget_from_nlp
+                        session["budget"] = budget_from_nlp
+                    elif parsed.get("budget") is not None and not session.get("budget"):
+                        budget_hints = ["budget", "crore", "lakh", "karor", "lac", "cr", "k", "rupay", "rupee", "pkr", "بجٹ", "کروڑ", "لاکھ", "روپے", "करोड़", "करोर", "लाख", "बज़ेट"]
+                        has_budget_mention = any(bh in msg_body.lower() for bh in budget_hints) or bool(re.search(r'\d+', msg_body))
+                        if not has_budget_mention:
+                            parsed["budget"] = None
 
                     for k in ["location", "purpose", "property_type", "bhk", "budget", "size", "funnel_state"]:
                         if k in parsed and parsed[k] is not None: 
@@ -3774,7 +4026,17 @@ Respond in JSON format only:
                             session["awaiting_confirmation"] = False
                         else:
                             session["awaiting_confirmation"] = True
-                            ai_reply = format_search_confirmation(session)
+                            is_u = bool(re.search(r'[\u0600-\u06FF]', msg_body))
+                            ai_reply = format_search_confirmation(session, is_urdu=is_u)
+                            btn_opts = ["کنفرم ✅", "تبدیل کریں 🔄"] if is_u else ["Confirm ✅", "Change 🔄"]
+                            send_whatsapp_buttons(tenant_id, from_number, ai_reply, btn_opts, wa_token)
+                            chat_hist.append({"role": "user", "content": msg_body})
+                            chat_hist.append({"role": "assistant", "content": ai_reply})
+                            session["chat_history"] = chat_hist[-50:]
+                            save_chat_history(from_number, tenant_id, "user", msg_body)
+                            save_chat_history(from_number, tenant_id, "assistant", ai_reply)
+                            save_user_session(from_number, tenant_id, session)
+                            return
                     else:
                         ai_reply = parsed.get("reply_text", llm_res)
                 except Exception as parse_err:
