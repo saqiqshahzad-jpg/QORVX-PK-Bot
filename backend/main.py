@@ -11,6 +11,10 @@ from groq import Groq
 from openai import OpenAI
 from google.oauth2.service_account import Credentials
 import gspread
+from dotenv import load_dotenv
+
+# Load environment variables from .env
+load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
 # =========================================================================================
 # CONFIGURATION & LOGGING
@@ -88,6 +92,24 @@ def get_user_session(phone: str, tenant_id: str):
     return default_session
 
 def save_user_session(phone: str, tenant_id: str, session: dict):
+    if not isinstance(session, dict):
+        logger.error(f"save_user_session: session must be dict, got {type(session)}")
+        return
+
+    # Defensive Guard: Ensure we NEVER wipe out existing session data with an empty or partial session
+    try:
+        existing = get_user_session(phone, tenant_id)
+        # If database already had rich profile information, merge it in so it cannot be wiped out
+        merged = {**existing}
+        for k, v in session.items():
+            # If incoming value is None but existing had a valid value, preserve existing value for critical profile fields
+            if v is None and k in ["user_name", "sent_properties", "archived_intents", "location", "budget", "property_type", "purpose", "bhk", "size"] and existing.get(k):
+                continue
+            merged[k] = v
+        session = merged
+    except Exception as merge_err:
+        logger.error(f"Failed to merge existing session in save_user_session: {merge_err}")
+
     session["last_interaction"] = time.time()
     payload = {"phone_number": phone, "tenant_id": tenant_id, "session_data": session}
     try:
@@ -243,15 +265,133 @@ class GoogleSheetCRM:
             logger.error(f"GoogleSheetCRM init failed for '{sheet_id}': {e}")
             self.client = None
 
-    def append_lead(self, phone: str, name: str, prop_id: str):
-        if not self.client: return False
+    def upsert_buyer_lead(
+        self,
+        phone: str,
+        name: str = "",
+        location: str = "",
+        budget: str = "",
+        property_type: str = "",
+        prop_id: str = "",
+        lead_status: str = "Warm (Inquiry)",
+        details: str = ""
+    ) -> bool:
+        """Upsert buyer lead in Leads sheet: inserts if new, updates status & details if existing."""
+        if not self.client:
+            logger.error("GoogleSheetCRM client not initialized.")
+            return False
         try:
             sheet = self.doc.worksheet("Leads")
-            sheet.append_row([name, phone, prop_id, time.strftime("%d-%m-%Y %H:%M:%S")])
-            return True
+            timestamp = time.strftime("%d-%m-%Y %H:%M:%S")
+
+            # Check / Ensure Headers on row 1
+            headers = []
+            try:
+                headers = sheet.row_values(1)
+            except Exception:
+                pass
+
+            expected_headers = ["Name", "Phone", "Property_ID", "Timestamp", "Lead_Status", "Location", "Budget", "Property_Type", "Details"]
+            if not headers:
+                sheet.append_row(expected_headers)
+                headers = expected_headers
+            elif len(headers) < 5 or "lead_status" not in [str(h).strip().lower() for h in headers]:
+                # Automatically add headers for columns 5..9 if missing
+                header_updates = [
+                    (5, "Lead_Status"),
+                    (6, "Location"),
+                    (7, "Budget"),
+                    (8, "Property_Type"),
+                    (9, "Details")
+                ]
+                for col_idx, col_name in header_updates:
+                    try:
+                        sheet.update_cell(1, col_idx, col_name)
+                    except Exception:
+                        pass
+
+            clean_phone = str(phone).strip()
+            records = []
+            try:
+                records = sheet.get_all_records()
+            except Exception as rec_err:
+                logger.warning(f"Failed to get_all_records in Leads: {rec_err}")
+
+            found_row = None
+            existing_record = None
+
+            for i, r in enumerate(records, start=2):  # Row 1 is header
+                stored_phone = str(r.get("Phone", "") or r.get("phone", "") or r.get("WhatsApp", "")).strip()
+                if (stored_phone == clean_phone or 
+                    (len(clean_phone) >= 10 and (stored_phone.endswith(clean_phone[-10:]) or clean_phone.endswith(stored_phone[-10:])))):
+                    found_row = i
+                    existing_record = r
+                    break
+
+            if found_row and existing_record is not None:
+                # Update existing row
+                current_status = str(existing_record.get("Lead_Status", "") or existing_record.get("lead_status", "")).strip()
+                final_status = lead_status
+                # Business Rule: Do NOT downgrade "Hot (Visit/Urgent)" back to "Warm (Inquiry)"
+                if "Hot" in current_status and "Warm" in lead_status:
+                    final_status = current_status
+
+                # Preserve existing name if incoming is generic
+                final_name = name.title() if name and name.lower() not in ["janab", "customer", "unknown", ""] else (existing_record.get("Name") or name or "Customer")
+                final_prop_id = prop_id if prop_id and prop_id not in ["General", "None", ""] else (existing_record.get("Property_ID") or prop_id or "General")
+                final_loc = location or existing_record.get("Location") or "N/A"
+                final_budget = budget or existing_record.get("Budget") or "N/A"
+                final_ptype = property_type or existing_record.get("Property_Type") or "N/A"
+                final_details = details or existing_record.get("Details") or ""
+
+                update_row_vals = [
+                    final_name,
+                    clean_phone,
+                    final_prop_id,
+                    timestamp,
+                    final_status,
+                    final_loc,
+                    final_budget,
+                    final_ptype,
+                    final_details
+                ]
+                
+                try:
+                    sheet.update(f"A{found_row}:I{found_row}", [update_row_vals])
+                except Exception:
+                    for col_idx, val in enumerate(update_row_vals, start=1):
+                        sheet.update_cell(found_row, col_idx, val)
+
+                logger.info(f"✅ GoogleSheetCRM: Lead updated for {clean_phone} -> Status: '{final_status}' at row {found_row}")
+                return True
+            else:
+                # Append new lead row
+                new_row = [
+                    name.title() if name else "Customer",
+                    clean_phone,
+                    prop_id or "General",
+                    timestamp,
+                    lead_status,
+                    location or "N/A",
+                    budget or "N/A",
+                    property_type or "N/A",
+                    details
+                ]
+                sheet.append_row(new_row)
+                logger.info(f"✅ GoogleSheetCRM: New lead appended for {clean_phone} -> Status: '{lead_status}'")
+                return True
         except Exception as e:
-            logger.error(f"Lead save failed: {e}")
+            logger.error(f"GoogleSheetCRM upsert_buyer_lead failed for {phone}: {e}")
             return False
+
+    def append_lead(self, phone: str, name: str, prop_id: str):
+        return self.upsert_buyer_lead(
+            phone=phone,
+            name=name,
+            prop_id=prop_id,
+            lead_status="Hot (Visit/Urgent)",
+            details="Physical Visit Booked"
+        )
 
     def update_lead_name(self, phone: str, new_name: str) -> bool:
         """Find lead by phone in Leads sheet and update name (column 1)."""
@@ -299,6 +439,27 @@ class GoogleSheetCRM:
             return True
         except Exception as e:
             logger.error(f"Seller Lead save failed: {e}")
+            return False
+
+    def append_urgent_lead(self, phone: str, name: str, prop_id: str, reason: str, details: str = ""):
+        if not self.client:
+            logger.error("Urgent Lead save failed: Google Sheets client not initialized.")
+            return False
+        try:
+            timestamp = time.strftime("%d-%m-%Y %H:%M:%S")
+            # Try to push to dedicated "Urgent_Leads" tab; if not present, fallback to "Leads" tab with [URGENT] tag
+            try:
+                sheet = self.doc.worksheet("Urgent_Leads")
+                sheet.append_row([timestamp, phone, name or "Customer", prop_id or "General Inquiry", reason, details])
+                logger.info(f"✅ Appended to 'Urgent_Leads' worksheet for {phone}")
+                return True
+            except Exception:
+                sheet = self.doc.worksheet("Leads")
+                sheet.append_row([f"[URGENT] {name or 'Customer'}", phone, f"ID: {prop_id or 'N/A'} | Reason: {reason}", timestamp])
+                logger.info(f"✅ Appended to 'Leads' worksheet with [URGENT] tag for {phone}")
+                return True
+        except Exception as e:
+            logger.error(f"Urgent Lead CRM push failed: {e}")
             return False
 
     def book_strategy(self, phone: str, date: str, time_str: str):
@@ -638,6 +799,24 @@ def execute_property_search(session, tenant_config, wa_token, from_number, tenan
         else:
             session["active_property"] = None
         
+        # 🚀 CRM Push: Push Warm (Inquiry) Lead to Google Sheet
+        try:
+            b_val = session.get("budget")
+            budget_str = f"Rs {b_val:,}" if isinstance(b_val, (int, float)) else str(b_val or "N/A")
+            crm.upsert_buyer_lead(
+                phone=from_number,
+                name=session.get("user_name") or "Customer",
+                location=session.get("location") or "N/A",
+                budget=budget_str,
+                property_type=session.get("property_type") or "N/A",
+                prop_id=str(p.get("ID", "N/A")),
+                lead_status="Warm (Inquiry)",
+                details=f"Sent Property: {p.get('Title', '')} (ID: {p.get('ID', '')}) | Purpose: {session.get('purpose', 'N/A')}"
+            )
+            logger.info(f"📊 Warm Lead successfully pushed/updated in CRM for {from_number}")
+        except Exception as warm_err:
+            logger.error(f"Failed to push warm lead in execute_property_search: {warm_err}")
+        
         time.sleep(2.0) # Ensure images arrive before buttons
         after_msg = "Inmein se koi pasand aaya ya mazeed options dekhne hain? 👇"
         buttons = ["Sasta option 📉", "Koi aur option 🔄", {"id": f"visit_{prop_id}", "title": "Visit karna 📅"}]
@@ -717,6 +896,13 @@ def extract_bhk(text: str, prop_type: str, last_ai: str):
             for w in words:
                 if w.isdigit() and 1 <= int(w) <= 15:
                     return int(w)
+    return None
+
+def extract_size(text: str):
+    match = re.search(r'(\d+)\s*(gaz|guz|sq\s*yd|sqyd|sq\s*ft|sqft|marla|kanal|acre)', text.lower())
+    if match:
+        val, unit = match.group(1), match.group(2).strip()
+        return f"{val} {unit}"
     return None
 
 # Karachi areas that the bot recognizes
@@ -1816,8 +2002,17 @@ def _get_specific_sublocation(text_lower: str, generic_key: str) -> str:
     return None
 
 
+NON_KARACHI_CITIES = [
+    "lahore", "islamabad", "rawalpindi", "pindi", "peshawar", "multan",
+    "quetta", "faisalabad", "gujranwala", "sialkot", "abbottabad", "hyderabad",
+    "dubai", "london", "vancouver", "toronto", "canada", "uk", "usa"
+]
+
 def extract_location(text: str, last_ai: str):
     text_lower = text.lower()
+    # If user explicitly specifies a non-Karachi city, do not extract Karachi sub-areas (e.g. Lahore DHA)
+    if any(re.search(r'\b' + re.escape(c) + r'\b', text_lower) for c in NON_KARACHI_CITIES):
+        return None
     # Check multi-word areas first (longer matches first)
     sorted_areas = sorted(KARACHI_AREAS, key=len, reverse=True)
     for loc in sorted_areas:
@@ -2519,9 +2714,21 @@ Respond in JSON format only:
                         # Extract Name (Remove the digits from text)
                         name = re.sub(r'\b\d{2}\b', '', msg_body).strip()
                         if not name: name = "Janab"
+                        session["user_name"] = name.title()
                         
                         crm = GoogleSheetCRM(tenant_config.get("property_sheet_name", ""))
-                        crm.append_lead(from_number, name.title(), found_id or "Unknown")
+                        b_val = session.get("budget")
+                        budget_str = f"Rs {b_val:,}" if isinstance(b_val, (int, float)) else str(b_val or "N/A")
+                        crm.upsert_buyer_lead(
+                            phone=from_number,
+                            name=name.title(),
+                            location=session.get("location") or "N/A",
+                            budget=budget_str,
+                            property_type=session.get("property_type") or "N/A",
+                            prop_id=found_id or "Unknown",
+                            lead_status="Hot (Visit/Urgent)",
+                            details=f"Physical Visit Booked for Property {found_id or 'Unknown'}"
+                        )
                         session["funnel_state"] = "COMPLETED"
                         
                         save_msg = "Aapka message hamare agent tak chala gaya hai! Hum jald hi aapse visit ke hawale se raabta karenge. Shukriya! 🤝"
@@ -2676,8 +2883,27 @@ Respond in JSON format only:
                             ai_reply = "Zabardast! Visit karne ke liye bas apna Pura Naam aur property ID ke aakhri 2 digits likh kar bhejein (ID property ke message ke aakhir mein likhi hoti hai). Main details forward kar dunga. 📝"
                     
                     elif "menu" in btn_id:
-                        session.clear()
-                        session["chat_history"] = []
+                        # Archive active search intent if it had criteria
+                        if session.get("purpose") or session.get("location"):
+                            archived = {
+                                "purpose": session.get("purpose"),
+                                "property_type": session.get("property_type"),
+                                "location": session.get("location"),
+                                "budget": session.get("budget"),
+                                "bhk": session.get("bhk"),
+                                "size": session.get("size"),
+                                "timestamp": time.time()
+                            }
+                            session.setdefault("archived_intents", []).append(archived)
+
+                        # Reset only active search funnel variables; PRESERVE customer profile (user_name, sent_properties, chat_history)
+                        for key in ["purpose", "property_type", "bhk", "size", "location", "budget", "state", "funnel_state", "active_property", "sub_location", "sub_location_prompt", "pending_location"]:
+                            session[key] = None
+                        session["awaiting_confirmation"] = False
+                        session["search_confirmed"] = False
+                        session["sub_location_pending"] = False
+                        session["location_confirm_pending"] = False
+
                         ai_reply = "Assalam o Alaikum! 🙏 Qorvx PK Bot mein khush amdeed. Main aapki property ke hawale se kaise madad kar sakta hoon? 👇"
                         send_whatsapp_buttons(tenant_id, from_number, ai_reply, ["Kharidni hai 🏠", "Rent pr leni hai 🏢", "Bechni hai 🤝"], wa_token)
                         save_user_session(from_number, tenant_id, session)
@@ -2827,6 +3053,9 @@ Respond in JSON format only:
                 
                 bhk = extract_bhk(msg_body, session.get("property_type"), last_ai)
                 if bhk: session["bhk"] = bhk
+                
+                size = extract_size(msg_body)
+                if size: session["size"] = size
                 
                 budget = parse_south_asian_budget(msg_body)
                 if budget: session["budget"] = budget
@@ -3012,6 +3241,11 @@ Respond in JSON format only:
                     # Map LLM's "bedrooms" key back to session's "bhk" key for backwards compatibility
                     if "bedrooms" in parsed and parsed["bedrooms"] is not None:
                         parsed["bhk"] = parsed.pop("bedrooms")
+
+                    # Prevent LLM hallucination of budget if user never mentioned any numbers/budget
+                    if parsed.get("budget") is not None and not parse_south_asian_budget(msg_body) and not session.get("budget"):
+                        parsed["budget"] = None
+
                     for k in ["location", "purpose", "property_type", "bhk", "budget", "size", "funnel_state"]:
                         if k in parsed and parsed[k] is not None: 
                             session[k] = parsed[k]
@@ -3028,15 +3262,58 @@ Respond in JSON format only:
                     if parsed.get("intent") == "handoff":
                         ai_reply = parsed.get("reply_text") or "Janab, main aapki chat apne senior agent ko assign kar raha hoon, woh abhi aapse raabta karenge."
                         send_whatsapp_text(tenant_id, from_number, ai_reply, wa_token)
+                        
+                        # CRM Push: Update Lead in Google Sheet to Hot (Visit/Urgent)
+                        try:
+                            crm = GoogleSheetCRM(tenant_config.get("property_sheet_name", ""))
+                            user_name = session.get("user_name") or "Janab"
+                            active_prop = session.get("active_property")
+                            if not active_prop and session.get("sent_properties"):
+                                active_prop = session["sent_properties"][0].get("ID")
+                            
+                            b_val = session.get("budget")
+                            budget_str = f"Rs {b_val:,}" if isinstance(b_val, (int, float)) else str(b_val or "N/A")
+                            req_summary = f"{session.get('purpose', '')} {session.get('property_type', '')} in {session.get('location', '')} (Budget: {budget_str})".strip()
+                            
+                            # 1. Update main Leads sheet to Hot (Visit/Urgent)
+                            crm.upsert_buyer_lead(
+                                phone=from_number,
+                                name=user_name,
+                                location=session.get("location") or "N/A",
+                                budget=budget_str,
+                                property_type=session.get("property_type") or "N/A",
+                                prop_id=str(active_prop or "None"),
+                                lead_status="Hot (Visit/Urgent)",
+                                details=f"Urgent Handoff: {msg_body}"
+                            )
+                            # 2. Also append to Urgent_Leads sheet if available
+                            crm.append_urgent_lead(
+                                phone=from_number,
+                                name=user_name,
+                                prop_id=str(active_prop or "None"),
+                                reason=msg_body,
+                                details=req_summary
+                            )
+                            logger.info(f"🚨 Urgent Lead successfully pushed to CRM for {from_number}")
+                        except Exception as crm_err:
+                            logger.error(f"Failed to push urgent lead to CRM: {crm_err}")
+
+                        chat_hist.append({"role": "user", "content": msg_body})
                         chat_hist.append({"role": "assistant", "content": ai_reply})
                         session["chat_history"] = chat_hist[-50:]
+                        save_chat_history(from_number, tenant_id, "user", msg_body)
+                        save_chat_history(from_number, tenant_id, "assistant", ai_reply)
                         save_user_session(from_number, tenant_id, session)
                         return  # Halt execution
 
                     elif parsed.get("intent") == "goodbye":
                         ai_reply = parsed.get("reply_text") or "Khush rahein Janab! Kisi bhi waqt mazeed maloomat ke liye humein message karein."
                         send_whatsapp_text(tenant_id, from_number, ai_reply, wa_token)
-                        session.clear()
+                        chat_hist.append({"role": "user", "content": msg_body})
+                        chat_hist.append({"role": "assistant", "content": ai_reply})
+                        session["chat_history"] = chat_hist[-50:]
+                        save_chat_history(from_number, tenant_id, "user", msg_body)
+                        save_chat_history(from_number, tenant_id, "assistant", ai_reply)
                         save_user_session(from_number, tenant_id, session)
                         return  # Halt execution
 
