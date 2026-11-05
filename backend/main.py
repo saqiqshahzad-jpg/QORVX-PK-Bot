@@ -726,6 +726,85 @@ def format_search_confirmation(session):
         
     return text
 
+def format_returning_user_greeting(session: dict, greeting_text: str = ""):
+    name = session.get("user_name")
+    name_clean = str(name).strip().title() if (name and str(name).strip().lower() not in ["customer", "janab", "user", "none"]) else ""
+    name_str = f" {name_clean} Sahab" if name_clean else " Janab"
+
+    gw = (greeting_text or "").lower().strip()
+    if any(s in gw for s in ["salam", "aoa", "assalam", "slaam", "slm", "aslkm"]):
+        salute = f"Walaikum Assalam{name_str}! 👋"
+    elif any(h in gw for h in ["hi", "hello", "hey", "hola", "holla"]):
+        salute = f"Hello{name_str}! 👋"
+    elif any(m in gw for m in ["morning", "subah", "subha"]):
+        salute = f"Good Morning{name_str}! ☀️"
+    elif any(e in gw for e in ["evening", "shaam", "sham"]):
+        salute = f"Good Evening{name_str}! 🌆"
+    elif any(n in gw for n in ["night", "shab"]):
+        salute = f"Good Night{name_str}! 🌙"
+    elif any(a in gw for a in ["adaab", "adab"]):
+        salute = f"Adaab{name_str}! 🙏"
+    else:
+        salute = f"Walaikum Assalam{name_str}! 👋"
+
+    sent_props = session.get("sent_properties", [])
+    active_prop_id = session.get("active_property")
+    loc = session.get("location")
+    ptype = session.get("property_type")
+    budget = session.get("budget")
+    archived = session.get("archived_intents", [])
+
+    # Case A: User already has sent properties
+    if sent_props:
+        target_prop = None
+        if active_prop_id:
+            target_prop = next((p for p in sent_props if str(p.get("ID", "")) == str(active_prop_id)), None)
+        if not target_prop:
+            target_prop = sent_props[-1]
+
+        p_title = target_prop.get("Title") or f"Property {target_prop.get('ID', '')}"
+        p_loc = target_prop.get("Location") or loc or "Karachi"
+        p_price = target_prop.get("Price")
+        price_str = f" (Demand: {p_price})" if p_price and p_price != "N/A" else ""
+
+        body = (
+            f"{salute}\n\n"
+            f"Aapne pichli baar *{p_title}* ({p_loc}){price_str} dekhi thi.\n\n"
+            f"Kya aap usi property par baat jaari rakhna chahte hain ya nayi property dekhni hai? 👇"
+        )
+    # Case B: User has active search criteria
+    elif loc and (ptype or budget):
+        b_str = f" (Budget: Rs {budget:,})" if isinstance(budget, (int, float)) else ""
+        type_str = f"{ptype.title()}" if ptype else "Property"
+        body = (
+            f"{salute}\n\n"
+            f"Aapne pichli baar *{loc}* mein *{type_str}*{b_str} ke hawale se baat ki thi.\n\n"
+            f"Kya aap usi search ko jaari rakhna chahte hain ya nayi property dekhni hai? 👇"
+        )
+    # Case C: Context in archived intents
+    elif archived:
+        last_arch = archived[-1]
+        a_loc = last_arch.get("location") or "Karachi"
+        a_type = last_arch.get("property_type") or "Property"
+        body = (
+            f"{salute}\n\n"
+            f"Aapne pehle *{a_loc}* mein *{a_type.title()}* ke hawale se raabta kiya tha.\n\n"
+            f"Aap kya karna chahenge? 👇"
+        )
+    # Case D: Only name or previous visit known
+    else:
+        body = (
+            f"{salute}\n\n"
+            f"Qorvx PK Bot mein wapas khush amdeed! Main aapki property ke hawale se kaise madad kar sakta hoon? 👇"
+        )
+
+    buttons = [
+        {"id": "btn_resume_previous", "title": "Pichli Property 🏡"},
+        {"id": "btn_new_search", "title": "Nayi Property 🔍"},
+        {"id": "btn_main_menu", "title": "Main Menu 🏠"}
+    ]
+    return body, buttons
+
 def save_seller_lead(session, tenant_config, phone):
     crm = GoogleSheetCRM(tenant_config.get("property_sheet_name", ""))
     ptype = session.get("property_type", "").title()
@@ -2517,9 +2596,6 @@ def process_whatsapp_data(data: dict):
                 chat_hist = session["chat_history"]
                 last_ai = chat_hist[-1]["content"] if chat_hist else ""
                 
-                # Initial Greeting or Returning User
-                is_new_session = not chat_hist
-                is_stale_session = now - session.get("last_interaction", now) > 86400 # 24 hours memory
                 # ─── GREETING LISTS ────────────────────────────────────────
                 SALAM_WORDS = [
                     "salam", "slaam", "slam", "sallam", "salaam", "slm",
@@ -2543,63 +2619,120 @@ def process_whatsapp_data(data: dict):
                 EVENING_WORDS = ["good evening", "ge", "evening", "shaam bakhair", "sham bakhair"]
                 NIGHT_WORDS = ["good night", "gn", "night", "shab bakhair"]
                 ADAAB_WORDS = ["adaab", "adab", "aadab", "adaab arz", "adaab arz hai"]
-                MENU_WORDS = ["menu", "start"]
+                MENU_WORDS = ["menu", "start", "main menu"]
                 
                 ALL_GREETINGS = (SALAM_WORDS + HI_WORDS + HEY_WORDS + YO_WORDS + 
                                  MORNING_WORDS + AFTERNOON_WORDS + EVENING_WORDS + 
-                                 NIGHT_WORDS + ADAAB_WORDS + MENU_WORDS)
+                                 NIGHT_WORDS + ADAAB_WORDS)
                 
                 msg_lower_stripped = msg_body.lower().strip().rstrip("!.?,")
-                is_greeting = msg_lower_stripped in ALL_GREETINGS
-                # ──────────────────────────────────────────────────────────────
+                
+                # Check for menu command first
+                is_menu_cmd = msg_lower_stripped in MENU_WORDS or msg_lower_stripped in ["menu chahiye", "main menu chahiye"]
+                
+                # Pure greeting detection (ensure message doesn't contain search requirements)
+                REQ_HINT_WORDS = ["chahiye", "chahe", "dekhna", "kharidna", "bechna", "rent", "crore", "lakh", "plot", "flat", "ghar", "bhk"]
+                has_req_hints = any(rw in msg_lower_stripped for rw in REQ_HINT_WORDS)
+                
+                is_greeting = False
+                if not has_req_hints and len(msg_lower_stripped.split()) <= 4:
+                    if msg_lower_stripped in ALL_GREETINGS:
+                        is_greeting = True
+                    elif any(msg_lower_stripped.startswith(g + " ") for g in ALL_GREETINGS if len(g) >= 3):
+                        is_greeting = True
 
-                if (is_new_session or is_stale_session) and is_greeting:
-                    # Reset search criteria for a fresh session
-                    for k in ["location", "budget", "property_type", "bhk", "size", "funnel_state", "state", "active_property", "sub_location", "sub_location_pending", "sub_location_prompt", "pending_location"]:
-                        session[k] = None
-                    session["sent_properties"] = []
-                    session["search_confirmed"] = False
+                # Check if user has returning context in database / session
+                has_returning_context = bool(
+                    session.get("sent_properties") or 
+                    session.get("active_property") or 
+                    (session.get("location") and (session.get("property_type") or session.get("budget"))) or
+                    session.get("archived_intents") or
+                    (session.get("user_name") and str(session.get("user_name")).strip().lower() not in ["customer", "janab", "user", "none"])
+                )
+
+                # 1. MENU REQUEST (Deterministic - 0 LLM cost)
+                if is_menu_cmd:
+                    # Archive active search intent if it had criteria
+                    if session.get("purpose") or session.get("location"):
+                        archived = {
+                            "purpose": session.get("purpose"),
+                            "property_type": session.get("property_type"),
+                            "location": session.get("location"),
+                            "budget": session.get("budget"),
+                            "bhk": session.get("bhk"),
+                            "size": session.get("size"),
+                            "timestamp": time.time()
+                        }
+                        session.setdefault("archived_intents", []).append(archived)
+
+                    # Reset only active search funnel variables; PRESERVE customer profile (user_name, sent_properties, chat_history, archived_intents)
+                    for key in ["purpose", "property_type", "bhk", "size", "location", "budget", "state", "funnel_state", "active_property", "sub_location", "sub_location_pending", "sub_location_prompt", "pending_location"]:
+                        session[key] = None
                     session["awaiting_confirmation"] = False
-                    msg = "Assalam o Alaikum! 🙏 Qorvx PK Bot mein khush amdeed. Main aapki property ke hawale se kaise madad kar sakta hoon? 👇"
-                    send_whatsapp_buttons(tenant_id, from_number, msg, ["Kharidni hai 🏠", "Rent pr leni hai 🏢", "Bechni hai 🤝"], wa_token)
+                    session["search_confirmed"] = False
+                    session["sub_location_pending"] = False
+                    session["location_confirm_pending"] = False
+
+                    name = session.get("user_name")
+                    welcome_prefix = f"Assalam o Alaikum {name} Sahab! 🙏" if (name and str(name).strip().lower() not in ["customer", "janab", "user", "none"]) else "Assalam o Alaikum! 🙏"
+                    menu_msg = f"{welcome_prefix} Qorvx PK Bot mein khush amdeed. Main aapki property ke hawale se kaise madad kar sakta hoon? 👇"
+                    send_whatsapp_buttons(tenant_id, from_number, menu_msg, ["Kharidni hai 🏠", "Rent pr leni hai 🏢", "Bechni hai 🤝"], wa_token)
                     chat_hist.append({"role": "user", "content": msg_body})
-                    chat_hist.append({"role": "assistant", "content": msg})
+                    chat_hist.append({"role": "assistant", "content": menu_msg})
                     session["chat_history"] = chat_hist[-50:]
                     save_chat_history(from_number, tenant_id, "user", msg_body)
-                    save_chat_history(from_number, tenant_id, "assistant", msg)
+                    save_chat_history(from_number, tenant_id, "assistant", menu_msg)
                     save_user_session(from_number, tenant_id, session)
                     return
 
-                # Greeting during active session — JESI GREETING WESA REPLY
-                if is_greeting and not is_new_session and not is_stale_session and msg_lower_stripped not in MENU_WORDS:
-                    if msg_lower_stripped in SALAM_WORDS:
-                        greeting_reply = "Walaikum Assalam! 🙏"
-                    elif msg_lower_stripped in HI_WORDS:
-                        greeting_reply = "Hello! 👋"
-                    elif msg_lower_stripped in HEY_WORDS:
-                        greeting_reply = "Hey! 👋"
-                    elif msg_lower_stripped in YO_WORDS:
-                        greeting_reply = "Yo! 👋"
-                    elif msg_lower_stripped in MORNING_WORDS:
-                        greeting_reply = "Good Morning! ☀️"
-                    elif msg_lower_stripped in AFTERNOON_WORDS:
-                        greeting_reply = "Good Afternoon! 🌤️"
-                    elif msg_lower_stripped in EVENING_WORDS:
-                        greeting_reply = "Good Evening! 🌆"
-                    elif msg_lower_stripped in NIGHT_WORDS:
-                        greeting_reply = "Good Night! 🌙"
-                    elif msg_lower_stripped in ADAAB_WORDS:
-                        greeting_reply = "Adaab! 🙏"
+                # 2. GREETING HANDLING (Zero LLM cost)
+                if is_greeting:
+                    time_since_last = now - session.get("last_interaction", now)
+
+                    # Active mid-flow conversation guard (interacted < 3 mins ago and in an unfinished step)
+                    if time_since_last < 180 and session.get("funnel_state") not in ["COMPLETED", None]:
+                        if any(s in msg_lower_stripped for s in ["salam", "aoa", "assalam", "slaam", "slm"]):
+                            reply_txt = "Walaikum Assalam! 🙏"
+                        else:
+                            reply_txt = "Hello! 👋"
+                            
+                        if session.get("funnel_state") == "AWAITING_VISIT_INFO":
+                            reply_txt += " Visit schedule karne ke liye baraye meherbani apna pura naam batayein. 📝"
+                        elif session.get("funnel_state") == "AWAITING_NEW_BUDGET":
+                            reply_txt += " Baraye meherbani apna naya budget batayein. 💰"
+                            
+                        send_whatsapp_text(tenant_id, from_number, reply_txt, wa_token)
+                        chat_hist.append({"role": "user", "content": msg_body})
+                        chat_hist.append({"role": "assistant", "content": reply_txt})
+                        session["chat_history"] = chat_hist[-50:]
+                        save_chat_history(from_number, tenant_id, "user", msg_body)
+                        save_chat_history(from_number, tenant_id, "assistant", reply_txt)
+                        save_user_session(from_number, tenant_id, session)
+                        return
+
+                    # RETURNING USER (Has past property / search context - SMART RESUME)
+                    if has_returning_context:
+                        greet_text, greet_buttons = format_returning_user_greeting(session, msg_body)
+                        send_whatsapp_buttons(tenant_id, from_number, greet_text, greet_buttons, wa_token)
+                        chat_hist.append({"role": "user", "content": msg_body})
+                        chat_hist.append({"role": "assistant", "content": greet_text})
+                        session["chat_history"] = chat_hist[-50:]
+                        save_chat_history(from_number, tenant_id, "user", msg_body)
+                        save_chat_history(from_number, tenant_id, "assistant", greet_text)
+                        save_user_session(from_number, tenant_id, session)
+                        return
+
+                    # NEW USER (No context at all - Clean Welcome)
                     else:
-                        greeting_reply = "Hello! 👋"
-                    send_whatsapp_text(tenant_id, from_number, greeting_reply, wa_token)
-                    chat_hist.append({"role": "user", "content": msg_body})
-                    chat_hist.append({"role": "assistant", "content": greeting_reply})
-                    session["chat_history"] = chat_hist[-50:]
-                    save_chat_history(from_number, tenant_id, "user", msg_body)
-                    save_chat_history(from_number, tenant_id, "assistant", greeting_reply)
-                    save_user_session(from_number, tenant_id, session)
-                    return
+                        new_msg = "Assalam o Alaikum! 🙏 Qorvx PK Bot mein khush amdeed. Main aapki property ke hawale se kaise madad kar sakta hoon? 👇"
+                        send_whatsapp_buttons(tenant_id, from_number, new_msg, ["Kharidni hai 🏠", "Rent pr leni hai 🏢", "Bechni hai 🤝"], wa_token)
+                        chat_hist.append({"role": "user", "content": msg_body})
+                        chat_hist.append({"role": "assistant", "content": new_msg})
+                        session["chat_history"] = chat_hist[-50:]
+                        save_chat_history(from_number, tenant_id, "user", msg_body)
+                        save_chat_history(from_number, tenant_id, "assistant", new_msg)
+                        save_user_session(from_number, tenant_id, session)
+                        return
 
                 if session.get("funnel_state") == "AWAITING_NEW_BUDGET":
                     new_budget = parse_south_asian_budget(msg_body)
@@ -2911,16 +3044,162 @@ Respond in JSON format only:
                         
                         if btn_id.startswith("visit_"):
                             session["active_property"] = btn_id.replace("visit_", "")
+                        elif not session.get("active_property") and session.get("sent_properties"):
+                            session["active_property"] = session["sent_properties"][0].get("ID")
                             
-                        if session.get("active_property"):
+                        known_name = session.get("user_name")
+                        if known_name and len(str(known_name).strip()) > 1 and str(known_name).strip().lower() not in ["customer", "janab", "user", "none"]:
+                            prop_id = session.get("active_property") or "Unknown"
+                            crm = GoogleSheetCRM(tenant_config.get("property_sheet_name", ""))
+                            b_val = session.get("budget")
+                            budget_str = f"Rs {b_val:,}" if isinstance(b_val, (int, float)) else str(b_val or "N/A")
+                            crm.upsert_buyer_lead(
+                                phone=from_number,
+                                name=str(known_name).title(),
+                                location=session.get("location") or "N/A",
+                                budget=budget_str,
+                                property_type=session.get("property_type") or "N/A",
+                                prop_id=prop_id,
+                                lead_status="Hot (Visit/Urgent)",
+                                details=f"Physical Visit Booked for Property {prop_id}"
+                            )
+                            session["funnel_state"] = "COMPLETED"
+                            ai_reply = f"Zabardast {str(known_name).title()} Sahab! 🎉 Property ({prop_id}) ke visit ke liye aapki details hamare expert agent ko bhej di gayi hain. Hum jald hi aapse schedule confirm karne ke liye raabta karenge. Shukriya! 🤝"
+                        elif session.get("active_property"):
                             ai_reply = "Zabardast! Visit karne ke liye bas aap mujhe apna Pura Naam bata dein, main aapki details aage forward kar deta hu aur aapse jald raabta karenge. 📝"
                         elif len(session.get("sent_properties", [])) == 1:
                             session["active_property"] = session["sent_properties"][0].get("ID")
                             ai_reply = "Zabardast! Visit karne ke liye bas aap mujhe apna Pura Naam bata dein, main aapki details aage forward kar deta hu aur aapse jald raabta karenge. 📝"
                         else:
                             ai_reply = "Zabardast! Visit karne ke liye bas apna Pura Naam aur property ID ke aakhri 2 digits likh kar bhejein (ID property ke message ke aakhir mein likhi hoti hai). Main details forward kar dunga. 📝"
-                    
-                    elif "menu" in btn_id:
+
+                    elif "resume_previous" in btn_id or "pichli" in btn_id:
+                        # User clicked "Pichli Property 🏡"
+                        sent_props = session.get("sent_properties", [])
+                        active_prop_id = session.get("active_property")
+                        target_prop = None
+                        if active_prop_id and sent_props:
+                            target_prop = next((p for p in sent_props if str(p.get("ID", "")) == str(active_prop_id)), None)
+                        if not target_prop and sent_props:
+                            target_prop = sent_props[-1]
+                            session["active_property"] = target_prop.get("ID")
+
+                        if target_prop:
+                            p_title = target_prop.get("Title") or f"Property {target_prop.get('ID', '')}"
+                            p_loc = target_prop.get("Location") or session.get("location") or "Karachi"
+                            p_price = target_prop.get("Price") or target_prop.get("Demand") or "N/A"
+                            p_id = target_prop.get("ID") or "N/A"
+                            p_desc = target_prop.get("Description") or ""
+                            p_bhk = target_prop.get("Raw_BHK") or ""
+
+                            reply_msg = (
+                                f"🏡 *Pichli Property ki Tafseelat:*\n\n"
+                                f"*{p_title}*\n"
+                                f"📍 *Location:* {p_loc}\n"
+                                f"💰 *Demand:* {p_price}\n"
+                                f"🆔 *Property ID:* {p_id}\n"
+                            )
+                            if p_bhk and str(p_bhk).strip() not in ["", "None"]:
+                                reply_msg += f"🛏️ *Bedrooms:* {p_bhk}\n"
+                            if p_desc:
+                                reply_msg += f"📝 {p_desc}\n"
+
+                            reply_msg += "\nAap iske hawale se kya karna chahenge? 👇\n(Visit book karein ya is property ke bare mein koi bhi sawal poochein)"
+
+                            sub_buttons = [
+                                {"id": f"visit_{p_id}", "title": "Visit Schedule 📅"},
+                                {"id": "btn_more_options", "title": "Koi aur option 🔄"},
+                                {"id": "btn_main_menu", "title": "Main Menu 🏠"}
+                            ]
+                            send_whatsapp_buttons(tenant_id, from_number, reply_msg, sub_buttons, wa_token)
+                            chat_hist.append({"role": "user", "content": msg_body})
+                            chat_hist.append({"role": "assistant", "content": reply_msg})
+                            session["chat_history"] = chat_hist[-50:]
+                            save_chat_history(from_number, tenant_id, "user", msg_body)
+                            save_chat_history(from_number, tenant_id, "assistant", reply_msg)
+                            save_user_session(from_number, tenant_id, session)
+                            return
+
+                        elif session.get("location"):
+                            loc = session.get("location")
+                            ptype = session.get("property_type") or "Property"
+                            b_val = session.get("budget")
+                            b_str = f"Rs {b_val:,}" if isinstance(b_val, (int, float)) else str(b_val or "N/A")
+
+                            reply_msg = (
+                                f"Janab, aapki pichli search requirements yeh thi:\n\n"
+                                f"📍 *Location:* {loc}\n"
+                                f"🏠 *Type:* {ptype.title()}\n"
+                                f"💰 *Budget:* {b_str}\n\n"
+                                f"Kya main inhi requirements par properties search karun? 👇"
+                            )
+                            sub_buttons = [
+                                {"id": "btn_search_inhi", "title": "Inhi par dikhao ✅"},
+                                {"id": "btn_new_search", "title": "Nayi Property 🔍"},
+                                {"id": "btn_main_menu", "title": "Main Menu 🏠"}
+                            ]
+                            send_whatsapp_buttons(tenant_id, from_number, reply_msg, sub_buttons, wa_token)
+                            chat_hist.append({"role": "user", "content": msg_body})
+                            chat_hist.append({"role": "assistant", "content": reply_msg})
+                            session["chat_history"] = chat_hist[-50:]
+                            save_chat_history(from_number, tenant_id, "user", msg_body)
+                            save_chat_history(from_number, tenant_id, "assistant", reply_msg)
+                            save_user_session(from_number, tenant_id, session)
+                            return
+
+                        else:
+                            reply_msg = "Janab, pichli koi saved property nahi mili. Aap nayi property search kar sakte hain ya Main Menu dekh sakte hain! 👇"
+                            sub_buttons = [
+                                {"id": "btn_new_search", "title": "Nayi Property 🔍"},
+                                {"id": "btn_main_menu", "title": "Main Menu 🏠"}
+                            ]
+                            send_whatsapp_buttons(tenant_id, from_number, reply_msg, sub_buttons, wa_token)
+                            chat_hist.append({"role": "user", "content": msg_body})
+                            chat_hist.append({"role": "assistant", "content": reply_msg})
+                            session["chat_history"] = chat_hist[-50:]
+                            save_chat_history(from_number, tenant_id, "user", msg_body)
+                            save_chat_history(from_number, tenant_id, "assistant", reply_msg)
+                            save_user_session(from_number, tenant_id, session)
+                            return
+
+                    elif "new_search" in btn_id or "nayi" in btn_id:
+                        # User clicked "Nayi Property 🔍"
+                        # Archive active search
+                        if session.get("purpose") or session.get("location") or session.get("sent_properties"):
+                            archived = {
+                                "purpose": session.get("purpose"),
+                                "property_type": session.get("property_type"),
+                                "location": session.get("location"),
+                                "budget": session.get("budget"),
+                                "bhk": session.get("bhk"),
+                                "size": session.get("size"),
+                                "active_property": session.get("active_property"),
+                                "timestamp": time.time()
+                            }
+                            session.setdefault("archived_intents", []).append(archived)
+
+                        # Reset active search variables; PRESERVE user_name, archived_intents, chat_history
+                        for key in ["purpose", "property_type", "bhk", "size", "location", "budget", "state", "funnel_state", "active_property", "sub_location", "sub_location_pending", "sub_location_prompt", "pending_location"]:
+                            session[key] = None
+                        session["sent_properties"] = []
+                        session["awaiting_confirmation"] = False
+                        session["search_confirmed"] = False
+                        session["sub_location_pending"] = False
+                        session["location_confirm_pending"] = False
+
+                        name = session.get("user_name")
+                        greeting_name = f"Janab {name}" if (name and str(name).strip().lower() not in ["customer", "janab", "user", "none"]) else "Janab"
+                        msg = f"Zabardast {greeting_name}! 🎉 Nayi property dhoondne ke liye batayein, aap kharidna chahte hain, rent par lena hai ya bechni hai? 👇"
+                        send_whatsapp_buttons(tenant_id, from_number, msg, ["Kharidni hai 🏠", "Rent pr leni hai 🏢", "Bechni hai 🤝"], wa_token)
+                        chat_hist.append({"role": "user", "content": msg_body})
+                        chat_hist.append({"role": "assistant", "content": msg})
+                        session["chat_history"] = chat_hist[-50:]
+                        save_chat_history(from_number, tenant_id, "user", msg_body)
+                        save_chat_history(from_number, tenant_id, "assistant", msg)
+                        save_user_session(from_number, tenant_id, session)
+                        return
+
+                    elif "menu" in btn_id or "main_menu" in btn_id:
                         # Archive active search intent if it had criteria
                         if session.get("purpose") or session.get("location"):
                             archived = {
@@ -2934,15 +3213,17 @@ Respond in JSON format only:
                             }
                             session.setdefault("archived_intents", []).append(archived)
 
-                        # Reset only active search funnel variables; PRESERVE customer profile (user_name, sent_properties, chat_history)
-                        for key in ["purpose", "property_type", "bhk", "size", "location", "budget", "state", "funnel_state", "active_property", "sub_location", "sub_location_prompt", "pending_location"]:
+                        # Reset only active search funnel variables; PRESERVE customer profile (user_name, sent_properties, chat_history, archived_intents)
+                        for key in ["purpose", "property_type", "bhk", "size", "location", "budget", "state", "funnel_state", "active_property", "sub_location", "sub_location_pending", "sub_location_prompt", "pending_location"]:
                             session[key] = None
                         session["awaiting_confirmation"] = False
                         session["search_confirmed"] = False
                         session["sub_location_pending"] = False
                         session["location_confirm_pending"] = False
 
-                        ai_reply = "Assalam o Alaikum! 🙏 Qorvx PK Bot mein khush amdeed. Main aapki property ke hawale se kaise madad kar sakta hoon? 👇"
+                        name = session.get("user_name")
+                        welcome_prefix = f"Assalam o Alaikum {name} Sahab! 🙏" if (name and str(name).strip().lower() not in ["customer", "janab", "user", "none"]) else "Assalam o Alaikum! 🙏"
+                        ai_reply = f"{welcome_prefix} Qorvx PK Bot mein khush amdeed. Main aapki property ke hawale se kaise madad kar sakta hoon? 👇"
                         send_whatsapp_buttons(tenant_id, from_number, ai_reply, ["Kharidni hai 🏠", "Rent pr leni hai 🏢", "Bechni hai 🤝"], wa_token)
                         save_user_session(from_number, tenant_id, session)
                         return
@@ -2961,6 +3242,90 @@ Respond in JSON format only:
 
                 # Intent shifts and confirmations are now handled purely by LLM and Button IDs
 
+                text_low = msg_body.lower().strip()
+
+                # Text trigger for "Pichli Property"
+                if any(kw in text_low for kw in ["pichli property", "purani property", "pehle wali property", "wahi property", "pichla option", "pichli baat"]) and (session.get("sent_properties") or session.get("location")):
+                    sent_props = session.get("sent_properties", [])
+                    active_prop_id = session.get("active_property")
+                    target_prop = None
+                    if active_prop_id and sent_props:
+                        target_prop = next((p for p in sent_props if str(p.get("ID", "")) == str(active_prop_id)), None)
+                    if not target_prop and sent_props:
+                        target_prop = sent_props[-1]
+                        session["active_property"] = target_prop.get("ID")
+
+                    if target_prop:
+                        p_title = target_prop.get("Title") or f"Property {target_prop.get('ID', '')}"
+                        p_loc = target_prop.get("Location") or session.get("location") or "Karachi"
+                        p_price = target_prop.get("Price") or target_prop.get("Demand") or "N/A"
+                        p_id = target_prop.get("ID") or "N/A"
+                        p_desc = target_prop.get("Description") or ""
+                        p_bhk = target_prop.get("Raw_BHK") or ""
+
+                        reply_msg = (
+                            f"🏡 *Pichli Property ki Tafseelat:*\n\n"
+                            f"*{p_title}*\n"
+                            f"📍 *Location:* {p_loc}\n"
+                            f"💰 *Demand:* {p_price}\n"
+                            f"🆔 *Property ID:* {p_id}\n"
+                        )
+                        if p_bhk and str(p_bhk).strip() not in ["", "None"]:
+                            reply_msg += f"🛏️ *Bedrooms:* {p_bhk}\n"
+                        if p_desc:
+                            reply_msg += f"📝 {p_desc}\n"
+
+                        reply_msg += "\nAap iske hawale se kya karna chahenge? 👇\n(Visit book karein ya is property ke bare mein koi bhi sawal poochein)"
+
+                        sub_buttons = [
+                            {"id": f"visit_{p_id}", "title": "Visit Schedule 📅"},
+                            {"id": "btn_more_options", "title": "Koi aur option 🔄"},
+                            {"id": "btn_main_menu", "title": "Main Menu 🏠"}
+                        ]
+                        send_whatsapp_buttons(tenant_id, from_number, reply_msg, sub_buttons, wa_token)
+                        chat_hist.append({"role": "user", "content": msg_body})
+                        chat_hist.append({"role": "assistant", "content": reply_msg})
+                        session["chat_history"] = chat_hist[-50:]
+                        save_chat_history(from_number, tenant_id, "user", msg_body)
+                        save_chat_history(from_number, tenant_id, "assistant", reply_msg)
+                        save_user_session(from_number, tenant_id, session)
+                        return
+
+                # Text trigger for "Nayi Property"
+                if any(kw in text_low for kw in ["nayi property", "naya search", "nayee property", "kuch naya dekhna"]):
+                    if session.get("purpose") or session.get("location") or session.get("sent_properties"):
+                        archived = {
+                            "purpose": session.get("purpose"),
+                            "property_type": session.get("property_type"),
+                            "location": session.get("location"),
+                            "budget": session.get("budget"),
+                            "bhk": session.get("bhk"),
+                            "size": session.get("size"),
+                            "active_property": session.get("active_property"),
+                            "timestamp": time.time()
+                        }
+                        session.setdefault("archived_intents", []).append(archived)
+
+                    for key in ["purpose", "property_type", "bhk", "size", "location", "budget", "state", "funnel_state", "active_property", "sub_location", "sub_location_pending", "sub_location_prompt", "pending_location"]:
+                        session[key] = None
+                    session["sent_properties"] = []
+                    session["awaiting_confirmation"] = False
+                    session["search_confirmed"] = False
+                    session["sub_location_pending"] = False
+                    session["location_confirm_pending"] = False
+
+                    name = session.get("user_name")
+                    greeting_name = f"Janab {name}" if (name and str(name).strip().lower() not in ["customer", "janab", "user", "none"]) else "Janab"
+                    msg = f"Zabardast {greeting_name}! 🎉 Nayi property dhoondne ke liye batayein, aap kharidna chahte hain, rent par lena hai ya bechni hai? 👇"
+                    send_whatsapp_buttons(tenant_id, from_number, msg, ["Kharidni hai 🏠", "Rent pr leni hai 🏢", "Bechni hai 🤝"], wa_token)
+                    chat_hist.append({"role": "user", "content": msg_body})
+                    chat_hist.append({"role": "assistant", "content": msg})
+                    session["chat_history"] = chat_hist[-50:]
+                    save_chat_history(from_number, tenant_id, "user", msg_body)
+                    save_chat_history(from_number, tenant_id, "assistant", msg)
+                    save_user_session(from_number, tenant_id, session)
+                    return
+
                 # Visit intent detection from free text (before LLM call)
                 visit_keywords = ["visit", "dekhna", "dekho", "dikhao ghar", "ghr visit", "property visit", "visit krna", "visit karna", "milna hai", "dekhnay", "ghar dekhna"]
                 if any(kw in msg_body.lower() for kw in visit_keywords) and session.get("sent_properties"):
@@ -2968,7 +3333,28 @@ Respond in JSON format only:
                     session["state"] = "SCHEDULING_VISIT"
                     session["funnel_state"] = "AWAITING_VISIT_INFO"
                     
-                    if session.get("active_property"):
+                    if not session.get("active_property") and len(sent_props) == 1:
+                        session["active_property"] = sent_props[0].get("ID")
+
+                    known_name = session.get("user_name")
+                    if known_name and len(str(known_name).strip()) > 1 and str(known_name).strip().lower() not in ["customer", "janab", "user", "none"]:
+                        prop_id = session.get("active_property") or (sent_props[0].get("ID") if sent_props else "Unknown")
+                        crm = GoogleSheetCRM(tenant_config.get("property_sheet_name", ""))
+                        b_val = session.get("budget")
+                        budget_str = f"Rs {b_val:,}" if isinstance(b_val, (int, float)) else str(b_val or "N/A")
+                        crm.upsert_buyer_lead(
+                            phone=from_number,
+                            name=str(known_name).title(),
+                            location=session.get("location") or "N/A",
+                            budget=budget_str,
+                            property_type=session.get("property_type") or "N/A",
+                            prop_id=prop_id,
+                            lead_status="Hot (Visit/Urgent)",
+                            details=f"Physical Visit Booked for Property {prop_id}"
+                        )
+                        session["funnel_state"] = "COMPLETED"
+                        ai_reply = f"Zabardast {str(known_name).title()} Sahab! 🎉 Property ({prop_id}) ke visit ke liye aapki details hamare expert agent ko bhej di gayi hain. Hum jald hi aapse schedule confirm karne ke liye raabta karenge. Shukriya! 🤝"
+                    elif session.get("active_property"):
                         ai_reply = f"Zabardast! Aap {session['active_property']} property visit karna chahte hain. Bas apna Pura Naam bata dein, main aapki details aage forward kar deta hu aur humari team jald aapse raabta karegi. 📝"
                     elif len(sent_props) == 1:
                         session["active_property"] = sent_props[0].get("ID")
