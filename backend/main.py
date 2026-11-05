@@ -291,24 +291,10 @@ class GoogleSheetCRM:
             except Exception:
                 pass
 
-            expected_headers = ["Name", "Phone", "Property_ID", "Timestamp", "Lead_Status", "Location", "Budget", "Property_Type", "Details"]
+            expected_headers = ["Name", "Phone Number", "Property ID", "Date", "Lead_Status", "Location", "Budget", "Property_Type", "Details"]
             if not headers:
                 sheet.append_row(expected_headers)
                 headers = expected_headers
-            elif len(headers) < 5 or "lead_status" not in [str(h).strip().lower() for h in headers]:
-                # Automatically add headers for columns 5..9 if missing
-                header_updates = [
-                    (5, "Lead_Status"),
-                    (6, "Location"),
-                    (7, "Budget"),
-                    (8, "Property_Type"),
-                    (9, "Details")
-                ]
-                for col_idx, col_name in header_updates:
-                    try:
-                        sheet.update_cell(1, col_idx, col_name)
-                    except Exception:
-                        pass
 
             clean_phone = str(phone).strip()
             records = []
@@ -321,7 +307,10 @@ class GoogleSheetCRM:
             existing_record = None
 
             for i, r in enumerate(records, start=2):  # Row 1 is header
-                stored_phone = str(r.get("Phone", "") or r.get("phone", "") or r.get("WhatsApp", "")).strip()
+                stored_phone = str(
+                    r.get("Phone Number") or r.get("Phone number") or r.get("phone number") or
+                    r.get("Phone") or r.get("phone") or r.get("WhatsApp") or ""
+                ).strip()
                 if (stored_phone == clean_phone or 
                     (len(clean_phone) >= 10 and (stored_phone.endswith(clean_phone[-10:]) or clean_phone.endswith(stored_phone[-10:])))):
                     found_row = i
@@ -330,18 +319,22 @@ class GoogleSheetCRM:
 
             if found_row and existing_record is not None:
                 # Update existing row
-                current_status = str(existing_record.get("Lead_Status", "") or existing_record.get("lead_status", "")).strip()
+                current_status = str(existing_record.get("Lead_Status") or existing_record.get("Lead Status") or existing_record.get("lead_status") or "").strip()
                 final_status = lead_status
                 # Business Rule: Do NOT downgrade "Hot (Visit/Urgent)" back to "Warm (Inquiry)"
                 if "Hot" in current_status and "Warm" in lead_status:
                     final_status = current_status
 
                 # Preserve existing name if incoming is generic
-                final_name = name.title() if name and name.lower() not in ["janab", "customer", "unknown", ""] else (existing_record.get("Name") or name or "Customer")
-                final_prop_id = prop_id if prop_id and prop_id not in ["General", "None", ""] else (existing_record.get("Property_ID") or prop_id or "General")
+                existing_name = str(existing_record.get("Name") or existing_record.get("name") or "").strip()
+                final_name = name.title() if name and name.lower() not in ["janab", "customer", "unknown", ""] else (existing_name or name or "Customer")
+                
+                existing_prop_id = str(existing_record.get("Property ID") or existing_record.get("Property_ID") or "").strip()
+                final_prop_id = prop_id if prop_id and prop_id not in ["General", "None", ""] else (existing_prop_id or prop_id or "General")
+                
                 final_loc = location or existing_record.get("Location") or "N/A"
                 final_budget = budget or existing_record.get("Budget") or "N/A"
-                final_ptype = property_type or existing_record.get("Property_Type") or "N/A"
+                final_ptype = property_type or existing_record.get("Property_Type") or existing_record.get("Property Type") or "N/A"
                 final_details = details or existing_record.get("Details") or ""
 
                 update_row_vals = [
@@ -399,12 +392,16 @@ class GoogleSheetCRM:
         try:
             sheet = self.doc.worksheet("Leads")
             records = sheet.get_all_records()
+            clean_phone = str(phone).strip()
             for i, r in enumerate(records, start=2):  # Row 1 = header
-                # Phone could be stored with or without country code
-                stored_phone = str(r.get("Phone", "") or r.get("phone", "") or r.get("WhatsApp", "")).strip()
-                if stored_phone == phone or stored_phone == phone[-10:]:
-                    sheet.update_cell(i, 1, new_name)  # Column 1 = Name
-                    logger.info(f"✅ Lead name updated: {phone} → '{new_name}'")
+                stored_phone = str(
+                    r.get("Phone Number") or r.get("Phone number") or r.get("phone number") or
+                    r.get("Phone") or r.get("phone") or r.get("WhatsApp") or ""
+                ).strip()
+                if (stored_phone == clean_phone or 
+                    (len(clean_phone) >= 10 and (stored_phone.endswith(clean_phone[-10:]) or clean_phone.endswith(stored_phone[-10:])))):
+                    sheet.update_cell(i, 1, new_name.title())  # Column 1 = Name
+                    logger.info(f"✅ Lead name updated: {phone} → '{new_name.title()}'")
                     return True
             logger.warning(f"⚠️ update_lead_name: Phone {phone} not found in Leads sheet")
             return False
@@ -2713,7 +2710,15 @@ Respond in JSON format only:
                             
                         # Extract Name (Remove the digits from text)
                         name = re.sub(r'\b\d{2}\b', '', msg_body).strip()
-                        if not name: name = "Janab"
+                        # Clean out conversational boilerplate if present
+                        for prefix in ["my name is", "mera naam", "name is", "naam hai", "this is", "i am", "main"]:
+                            if prefix in name.lower():
+                                parts = re.split(re.escape(prefix), name, flags=re.IGNORECASE)
+                                if len(parts) > 1 and parts[-1].strip():
+                                    name = parts[-1].strip().rstrip(".!?")
+                                    break
+                        if not name or len(name) > 35 or any(q in name.lower() for q in ["?", "kitne", "hai", "kya", "bhai", "mein"]):
+                            name = session.get("user_name") or "Customer"
                         session["user_name"] = name.title()
                         
                         crm = GoogleSheetCRM(tenant_config.get("property_sheet_name", ""))
