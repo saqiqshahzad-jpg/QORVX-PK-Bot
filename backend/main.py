@@ -96,19 +96,24 @@ def save_user_session(phone: str, tenant_id: str, session: dict):
         logger.error(f"save_user_session: session must be dict, got {type(session)}")
         return
 
-    # Defensive Guard: Ensure we NEVER wipe out existing session data with an empty or partial session
-    try:
-        existing = get_user_session(phone, tenant_id)
-        # If database already had rich profile information, merge it in so it cannot be wiped out
-        merged = {**existing}
-        for k, v in session.items():
-            # If incoming value is None but existing had a valid value, preserve existing value for critical profile fields
-            if v is None and k in ["user_name", "sent_properties", "archived_intents", "location", "budget", "property_type", "purpose", "bhk", "size"] and existing.get(k):
-                continue
-            merged[k] = v
-        session = merged
-    except Exception as merge_err:
-        logger.error(f"Failed to merge existing session in save_user_session: {merge_err}")
+    # Defensive Guard: Only protect against completely empty or wiped-out session dictionaries (e.g. {} or {"last_interaction": ...})
+    non_meta_keys = [k for k in session.keys() if k not in ["last_interaction"]]
+    if len(non_meta_keys) == 0:
+        logger.warning(f"⚠️ save_user_session called with empty session for {phone}. Fetching existing database session to prevent complete wipeout!")
+        try:
+            existing = get_user_session(phone, tenant_id)
+            session = {**existing, **session}
+        except Exception as merge_err:
+            logger.error(f"Failed to merge existing session in save_user_session: {merge_err}")
+
+    # Preserve user_name if already known in DB and incoming session has user_name as None
+    if session.get("user_name") is None:
+        try:
+            existing = get_user_session(phone, tenant_id)
+            if existing.get("user_name"):
+                session["user_name"] = existing["user_name"]
+        except Exception:
+            pass
 
     session["last_interaction"] = time.time()
     payload = {"phone_number": phone, "tenant_id": tenant_id, "session_data": session}
@@ -870,16 +875,17 @@ def execute_property_search(session, tenant_config, wa_token, from_number, tenan
 # =========================================================================================
 def parse_south_asian_budget(text: str):
     text = text.lower().replace(",", "")
-    match = re.search(r'(\d*\.\d+|\d+)\s*(lac|lakh|crore|karor|cr|k|m|pkr)', text)
+    # Strict word boundary so "8 mein" does NOT match "m"
+    match = re.search(r'\b(\d*\.\d+|\d+)\s*(lacs?|lakhs?|crores?|karors?|cr|million|mn|m|k|pkr)\b', text)
     if not match:
         digits = re.search(r'\b(\d{5,10})\b', text)
         return int(digits.group(1)) if digits else None
     
     val, unit = float(match.group(1)), match.group(2)
-    if unit in ['lac', 'lakh']: return int(val * 100000)
-    if unit in ['crore', 'karor', 'cr']: return int(val * 10000000)
+    if unit in ['lac', 'lacs', 'lakh', 'lakhs']: return int(val * 100000)
+    if unit in ['crore', 'crores', 'karor', 'karors', 'cr']: return int(val * 10000000)
     if unit == 'k': return int(val * 1000)
-    if unit == 'm': return int(val * 1000000)
+    if unit in ['m', 'million', 'mn']: return int(val * 1000000)
     return int(val)
 
 def extract_bhk(text: str, prop_type: str, last_ai: str):
@@ -2064,7 +2070,7 @@ Do NOT ask "aap Karachi, Lahore, Islamabad mein se kahan?" — you ONLY operate 
 
     "intent_rules": """INTENT RULES: Set intent="search" ONLY when: (A) ALL requirements gathered, OR (B) user stubbornly insists after being asked. NEVER set search on first message if requirements missing — use "qa" first. If ACTIVE PROPERTY DETAILS provided → answer from it only. Multiple properties sent but none selected → ask user to clarify via image reply or last 2 digits of ID.""",
 
-    "visit_flow": """VISIT FLOW: User wants to visit → intent: "visit", funnel_state: "AWAITING_VISIT_INFO". NEVER ask date/time/phone. Only need NAME. One property sent → auto-select. Multiple → ask for ID's last 2 digits + name. IF user asks a question instead of giving name, answer the question and politely remind them to provide their full name if they still want to visit.""",
+    "visit_flow": """VISIT FLOW: User wants to visit a property that was already sent → intent: "visit", funnel_state: "AWAITING_VISIT_INFO". CRITICAL: NEVER set intent to "visit" or funnel_state to "AWAITING_VISIT_INFO" if no properties have been sent yet (when sent_properties is empty). If user has not seen properties yet, focus on collecting their missing requirements (location, budget, type) and searching properties first! When properties are sent: One property sent → auto-select. Multiple → ask for ID's last 2 digits + name. IF user asks a question instead of giving name, answer the question and politely remind them to provide their full name if they still want to visit.""",
 
     "language": """LANGUAGE: STRICTLY Roman Urdu in English alphabet. NEVER Arabic/Urdu script. NO Hindi (Kripya/Namaste/Dhanyawad). Use Baraye meharbani, Assalam o Alaikum, Shukriya. ALWAYS use emojis ✨. When asking property type, mention "Portion" in options.""",
 
@@ -2548,6 +2554,12 @@ def process_whatsapp_data(data: dict):
                 # ──────────────────────────────────────────────────────────────
 
                 if (is_new_session or is_stale_session) and is_greeting:
+                    # Reset search criteria for a fresh session
+                    for k in ["location", "budget", "property_type", "bhk", "size", "funnel_state", "state", "active_property", "sub_location", "sub_location_pending", "sub_location_prompt", "pending_location"]:
+                        session[k] = None
+                    session["sent_properties"] = []
+                    session["search_confirmed"] = False
+                    session["awaiting_confirmation"] = False
                     msg = "Assalam o Alaikum! 🙏 Qorvx PK Bot mein khush amdeed. Main aapki property ke hawale se kaise madad kar sakta hoon? 👇"
                     send_whatsapp_buttons(tenant_id, from_number, msg, ["Kharidni hai 🏠", "Rent pr leni hai 🏢", "Bechni hai 🤝"], wa_token)
                     chat_hist.append({"role": "user", "content": msg_body})
@@ -2669,8 +2681,13 @@ def process_whatsapp_data(data: dict):
 
                 # Lead Capture Booking Engine
                 if session.get("funnel_state") == "AWAITING_VISIT_INFO":
-                    # Verify if user provided a name or asked a question
-                    verification_prompt = f"""User was asked to provide their FULL NAME to schedule a property visit.
+                    # Stale visit flow protection: A user can NEVER be in visit flow if no properties have been sent yet!
+                    if not session.get("sent_properties") and not session.get("active_property"):
+                        logger.warning(f"⚠️ Resetting stale AWAITING_VISIT_INFO for {from_number} because no properties were sent.")
+                        session["funnel_state"] = None
+                    else:
+                        # Verify if user provided a name or asked a question
+                        verification_prompt = f"""User was asked to provide their FULL NAME to schedule a property visit.
 User's reply: "{msg_body}"
 
 Is the user providing their name (or confirming/agreeing to visit), OR are they asking a question/saying something else?
@@ -2678,83 +2695,99 @@ If it's just a name or a greeting+name, return true. If it's a question about th
 Respond in JSON format only:
 {{"is_name": boolean}}
 """
-                    is_name = True
-                    try:
-                        res = chat_completion_fallback([
-                            {"role": "system", "content": "You are a helpful JSON-only assistant."},
-                            {"role": "user", "content": verification_prompt}
-                        ])
-                        ver_data = extract_clean_json(res)
-                        is_name = ver_data.get("is_name", True)
-                    except Exception as e:
-                        logger.error(f"LLM verification failed for visit info: {e}")
+                        is_name = True
+                        try:
+                            res = chat_completion_fallback([
+                                {"role": "system", "content": "You are a helpful JSON-only assistant."},
+                                {"role": "user", "content": verification_prompt}
+                            ])
+                            ver_data = extract_clean_json(res)
+                            is_name = ver_data.get("is_name", True)
+                        except Exception as e:
+                            logger.error(f"LLM verification failed for visit info: {e}")
 
-                    if is_name:
-                        sent_props = session.get("sent_properties", [])
-                        matches = re.findall(r'\b\d{2}\b', msg_body)
-                        found_id = session.get("active_property")
-                        
-                        if not found_id and matches:
-                            for m in matches:
-                                for sp in sent_props:
-                                    pid = str(sp.get("ID", ""))
-                                    if pid.endswith(m):
-                                        found_id = pid
+                        if is_name:
+                            sent_props = session.get("sent_properties", [])
+                            matches = re.findall(r'\b\d{2}\b', msg_body)
+                            found_id = session.get("active_property")
+                            
+                            if not found_id and matches:
+                                for m in matches:
+                                    for sp in sent_props:
+                                        pid = str(sp.get("ID", ""))
+                                        if pid.endswith(m):
+                                            found_id = pid
+                                            break
+                            
+                            if not found_id and len(sent_props) > 1:
+                                # Couldn't find ID, ask again
+                                send_whatsapp_text(tenant_id, from_number, "Maazrat, mujhe property ID samajh nahi aayi. Baraye meherbani property ID ke aakhri 2 digits lazmi likhein.", wa_token)
+                                save_user_session(from_number, tenant_id, session)
+                                return
+                                
+                            # Extract Name (Remove the digits from text)
+                            name = re.sub(r'\b\d{2}\b', '', msg_body).strip()
+                            # Clean out conversational boilerplate if present
+                            for prefix in ["my name is", "mera naam", "name is", "naam hai", "this is", "i am", "main"]:
+                                if prefix in name.lower():
+                                    parts = re.split(re.escape(prefix), name, flags=re.IGNORECASE)
+                                    if len(parts) > 1 and parts[-1].strip():
+                                        name = parts[-1].strip().rstrip(".!?")
                                         break
-                        
-                        if not found_id and len(sent_props) > 1:
-                            # Couldn't find ID, ask again
-                            send_whatsapp_text(tenant_id, from_number, "Maazrat, mujhe property ID samajh nahi aayi. Baraye meherbani property ID ke aakhri 2 digits lazmi likhein.", wa_token)
+                            if not name or len(name) > 35 or any(q in name.lower() for q in ["?", "kitne", "hai", "kya", "bhai", "mein"]):
+                                name = session.get("user_name") or "Customer"
+                            session["user_name"] = name.title()
+                            
+                            crm = GoogleSheetCRM(tenant_config.get("property_sheet_name", ""))
+                            b_val = session.get("budget")
+                            budget_str = f"Rs {b_val:,}" if isinstance(b_val, (int, float)) else str(b_val or "N/A")
+                            crm.upsert_buyer_lead(
+                                phone=from_number,
+                                name=name.title(),
+                                location=session.get("location") or "N/A",
+                                budget=budget_str,
+                                property_type=session.get("property_type") or "N/A",
+                                prop_id=found_id or "Unknown",
+                                lead_status="Hot (Visit/Urgent)",
+                                details=f"Physical Visit Booked for Property {found_id or 'Unknown'}"
+                            )
+                            session["funnel_state"] = "COMPLETED"
+                            
+                            save_msg = "Aapka message hamare agent tak chala gaya hai! Hum jald hi aapse visit ke hawale se raabta karenge. Shukriya! 🤝"
+                            send_whatsapp_text(tenant_id, from_number, save_msg, wa_token)
                             save_user_session(from_number, tenant_id, session)
                             return
-                            
-                        # Extract Name (Remove the digits from text)
-                        name = re.sub(r'\b\d{2}\b', '', msg_body).strip()
-                        # Clean out conversational boilerplate if present
-                        for prefix in ["my name is", "mera naam", "name is", "naam hai", "this is", "i am", "main"]:
-                            if prefix in name.lower():
-                                parts = re.split(re.escape(prefix), name, flags=re.IGNORECASE)
-                                if len(parts) > 1 and parts[-1].strip():
-                                    name = parts[-1].strip().rstrip(".!?")
-                                    break
-                        if not name or len(name) > 35 or any(q in name.lower() for q in ["?", "kitne", "hai", "kya", "bhai", "mein"]):
-                            name = session.get("user_name") or "Customer"
-                        session["user_name"] = name.title()
-                        
-                        crm = GoogleSheetCRM(tenant_config.get("property_sheet_name", ""))
-                        b_val = session.get("budget")
-                        budget_str = f"Rs {b_val:,}" if isinstance(b_val, (int, float)) else str(b_val or "N/A")
-                        crm.upsert_buyer_lead(
-                            phone=from_number,
-                            name=name.title(),
-                            location=session.get("location") or "N/A",
-                            budget=budget_str,
-                            property_type=session.get("property_type") or "N/A",
-                            prop_id=found_id or "Unknown",
-                            lead_status="Hot (Visit/Urgent)",
-                            details=f"Physical Visit Booked for Property {found_id or 'Unknown'}"
-                        )
-                        session["funnel_state"] = "COMPLETED"
-                        
-                        save_msg = "Aapka message hamare agent tak chala gaya hai! Hum jald hi aapse visit ke hawale se raabta karenge. Shukriya! 🤝"
-                        send_whatsapp_text(tenant_id, from_number, save_msg, wa_token)
-                        save_user_session(from_number, tenant_id, session)
-                        return
-                    else:
-                        logger.info(f"User asked a question during visit flow instead of providing name: {msg_body}")
-                        # Do not return here, let the normal LLM flow answer the question!
+                        else:
+                            logger.info(f"User asked a question during visit flow instead of providing name: {msg_body}")
+                            # Do not return here, let the normal LLM flow answer the question!
 
                 # Interactive Fast-Track
                 if btn_id:
                     ai_reply = ""
                     if "buy" in btn_id or "kharidni" in btn_id:
                         session["purpose"] = "buy"
+                        # Clean slate for new search: clear old criteria, properties, and visit states
+                        for k in ["location", "budget", "property_type", "bhk", "size", "funnel_state", "state", "active_property", "sub_location", "sub_location_pending", "sub_location_prompt", "pending_location"]:
+                            session[k] = None
+                        session["sent_properties"] = []
+                        session["search_confirmed"] = False
+                        session["awaiting_confirmation"] = False
                         ai_reply = "Zabardast! 🎉 Karachi ke kis area mein property dekhna chahte hain? (jaise DHA, Clifton, Gulshan, Bahria Town, etc.) 📍"
                     elif "rent" in btn_id:
                         session["purpose"] = "rent"
+                        for k in ["location", "budget", "property_type", "bhk", "size", "funnel_state", "state", "active_property", "sub_location", "sub_location_pending", "sub_location_prompt", "pending_location"]:
+                            session[k] = None
+                        session["sent_properties"] = []
+                        session["search_confirmed"] = False
+                        session["awaiting_confirmation"] = False
                         ai_reply = "Theek hai! 👍 Karachi ke kis area mein rent ke liye dekhna hai? (jaise DHA, Clifton, Gulshan, etc.) 📍"
                     elif "sell" in btn_id or "bechni" in btn_id:
                         session["purpose"] = "sell"
+                        for k in ["location", "budget", "property_type", "bhk", "size", "funnel_state", "active_property", "sub_location", "sub_location_pending", "sub_location_prompt", "pending_location"]:
+                            session[k] = None
+                        session["sent_properties"] = []
+                        session["search_confirmed"] = False
+                        session["awaiting_confirmation"] = False
                         session["state"] = "ASKING_SELL_TYPE"
                         ai_reply = "Aap kya bechna chahte hain? 🏡 (Ghar, Flat, Portion, Plot, Commercial?)"
                     elif "change" in btn_id or "badlein" in btn_id:
@@ -3254,6 +3287,10 @@ Respond in JSON format only:
                     for k in ["location", "purpose", "property_type", "bhk", "budget", "size", "funnel_state"]:
                         if k in parsed and parsed[k] is not None: 
                             session[k] = parsed[k]
+
+                    # Guard: A user can NEVER be in visit flow if no properties have been sent yet
+                    if session.get("funnel_state") == "AWAITING_VISIT_INFO" and not session.get("sent_properties") and not session.get("active_property"):
+                        session["funnel_state"] = None
                             
                     # Clean up if property type changed
                     if old_ptype and old_ptype != session.get("property_type"):
