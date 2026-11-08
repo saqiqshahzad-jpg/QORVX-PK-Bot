@@ -535,10 +535,11 @@ class GoogleSheetCRM:
         except:
             return False, "System error"
 
-    def search_properties(self, location, property_type, purpose, bhk=None, budget=None, limit=2, exclude_ids=None):
+    def search_properties(self, location, property_type, purpose, bhk=None, budget=None, limit=2, exclude_ids=None, exclude_signatures=None):
         if not self.client:
             return []
-        exclude_ids = exclude_ids or []
+        exclude_ids = [str(x).strip() for x in (exclude_ids or []) if str(x).strip() and str(x).strip() != "N/A"]
+        exclude_signatures = [str(x).strip().lower() for x in (exclude_signatures or []) if str(x).strip()]
         try:
             # The worksheet is the same as the sheet name
             try:
@@ -549,7 +550,9 @@ class GoogleSheetCRM:
             records = sheet.get_all_records()
             results = []
             for r in records:
-                if str(r.get("Property_ID", "")) in exclude_ids: continue
+                prop_id = str(r.get("Property_ID") or r.get("Property_ID ") or r.get("Property ID") or r.get("ID") or "").strip()
+                if prop_id and prop_id in exclude_ids:
+                    continue
                 
                 r_city = str(r.get("City", "")).lower()
                 r_society = str(r.get("Society_Area", "")).lower()
@@ -581,6 +584,11 @@ class GoogleSheetCRM:
                     loc = f"{phase}, {r.get('Society_Area', '')}, {r.get('City', '')}"
                 else:
                     loc = f"{r.get('Society_Area', '')}, {r.get('City', '')}"
+
+                prop_sig = f"{title.strip().lower()}|{loc.strip().lower()}"
+                if prop_sig in exclude_signatures:
+                    continue
+
                 price = f"{r.get('Demand_PKR', 'N/A')}"
                 
                 poss = str(r.get('Possession', '-')).strip()
@@ -598,7 +606,7 @@ class GoogleSheetCRM:
                     "Location": loc,
                     "Price": price,
                     "Description": desc,
-                    "ID": str(r.get("Property_ID", "")),
+                    "ID": prop_id if prop_id else "N/A",
                     "Images": images,
                     "Raw_BHK": str(r.get("BHK", "")),
                     "Raw_Budget": r.get("Demand_PKR", 0),
@@ -613,8 +621,10 @@ class GoogleSheetCRM:
             logger.error(f"search_properties error: {e}", exc_info=True)
             return []
 
-    def search_similar_properties(self, location, property_type, purpose, exclude_ids, budget=None, bhk=None):
+    def search_similar_properties(self, location, property_type, purpose, exclude_ids=None, budget=None, bhk=None, size=None, exclude_signatures=None):
         if not self.client: return None
+        exclude_ids = [str(x).strip() for x in (exclude_ids or []) if str(x).strip() and str(x).strip() != "N/A"]
+        exclude_signatures = [str(x).strip().lower() for x in (exclude_signatures or []) if str(x).strip()]
         try:
             try:
                 sheet = self.doc.worksheet(self.sheet_id)
@@ -624,26 +634,42 @@ class GoogleSheetCRM:
             records = sheet.get_all_records()
             best_match = None
             highest_score = -1
+            best_diag = {}
 
             for r in records:
-                prop_id = str(r.get("Property_ID", ""))
-                if prop_id in exclude_ids: continue
+                prop_id = str(r.get("Property_ID") or r.get("Property_ID ") or r.get("Property ID") or r.get("ID") or "").strip()
+                if prop_id and prop_id in exclude_ids: continue
                 
                 r_city = str(r.get("City", "")).lower()
                 r_society = str(r.get("Society_Area", "")).lower()
                 r_type = str(r.get("Property_Type", "")).lower()
                 r_purpose = str(r.get("Listing_Type", "")).lower()
                 
-                # STRICT: Purpose MUST match
+                # STRICT: Purpose MUST match (Buy vs Rent)
                 if purpose and purpose.lower() not in r_purpose: continue
+
+                # STRICT: Property Type MUST match (House vs Flat vs Plot etc.)
+                if property_type and property_type.lower() not in r_type: continue
                 
-                score = 0
+                bhk_str = f"{r.get('BHK')} BHK " if r.get('BHK') else ""
+                size_str = f"{r.get('Size')} " if r.get('Size') else ""
+                prop_type_str = str(r.get('Property_Type', 'Property')).title()
+                cand_title = f"{bhk_str}{size_str}{prop_type_str} in {r.get('Society_Area', '')}"
+                phase = str(r.get('Phase_Block', '')).strip()
+                if phase and phase != '-':
+                    cand_loc = f"{phase}, {r.get('Society_Area', '')}, {r.get('City', '')}"
+                else:
+                    cand_loc = f"{r.get('Society_Area', '')}, {r.get('City', '')}"
                 
-                # Location Compatibility & Score (STRICT: Never recommend cross-cluster e.g. Liaquatabad for Defense)
+                prop_sig = f"{cand_title.strip().lower()}|{cand_loc.strip().lower()}"
+                if prop_sig in exclude_signatures: continue
+                
+                # ── Location Compatibility Check ──
+                direct_match = False
+                cluster_match = False
                 if location:
                     loc_lower = location.lower().strip()
                     r_comb_loc = f"{r_society} {r_city}".lower()
-                    
                     direct_match = loc_lower in r_comb_loc or any(len(w) > 2 and w in r_comb_loc for w in loc_lower.split())
                     user_clusters = [c_name for c_name, areas in LOCATION_CLUSTERS.items() if any(a in loc_lower for a in areas)]
                     prop_clusters = [c_name for c_name, areas in LOCATION_CLUSTERS.items() if any(a in r_comb_loc for a in areas)]
@@ -652,49 +678,107 @@ class GoogleSheetCRM:
                     if not direct_match and not cluster_match:
                         # Alien location candidate — skip entirely!
                         continue
-                    
-                    if direct_match:
-                        score += 50
-                    elif cluster_match:
-                        score += 25
 
-                # Property Type Score
-                if property_type and property_type.lower() in r_type:
-                    score += 30
+                # ── Budget Compatibility Check ──
+                prop_demand = 0
+                raw_demand = r.get("Demand_PKR", 0)
+                try:
+                    prop_demand = int(str(raw_demand).replace(",", ""))
+                except:
+                    prop_demand = 0
 
-                # Budget Score (STRICT: Max 30% above user budget — HARD CAP)
-                if budget:
-                    prop_demand = r.get("Demand_PKR", 0)
+                budget_diff = False
+                budget_penalty = 0
+                if budget and prop_demand > 0:
+                    # HARD CAP: Never recommend property > 130% of user budget
+                    if prop_demand > budget * 1.3:
+                        continue
+                    if prop_demand > budget:
+                        budget_diff = True
+                        ratio = (prop_demand - budget) / budget
+                        budget_penalty = int(ratio * 60)
+
+                # ── BHK Compatibility Check ──
+                bhk_diff = False
+                prop_bhk_val = None
+                raw_bhk = str(r.get("BHK", "")).strip()
+                if raw_bhk:
                     try:
-                        prop_demand = int(str(prop_demand).replace(",", ""))
-                        # HARD CAP: Never recommend property > 130% of user budget
-                        if prop_demand > budget * 1.3:
-                            continue  # Skip this property entirely
-                        if prop_demand <= budget:
-                            score += 20
-                        elif prop_demand <= budget * 1.2:
-                            score += 15
-                        elif prop_demand <= budget * 1.3:
-                            score += 5
+                        prop_bhk_val = int(raw_bhk)
                     except:
                         pass
                 
-                # BHK Score
-                if bhk:
+                if bhk and prop_bhk_val is not None:
                     try:
-                        prop_bhk = int(str(r.get("BHK", "0")))
-                        if prop_bhk == int(bhk):
-                            score += 15
-                        elif abs(prop_bhk - int(bhk)) == 1:
-                            score += 5
+                        u_bhk_val = int(bhk)
+                        if prop_bhk_val != u_bhk_val:
+                            bhk_diff = True
+                            bhk_diff_abs = abs(prop_bhk_val - u_bhk_val)
+                            if bhk_diff_abs > 1:
+                                continue
                     except:
                         pass
 
-                # We need at least SOME similarity to recommend
-                if score > highest_score and score > 20:
+                loc_diff = not direct_match
+
+                diff_count = int(loc_diff) + int(budget_diff) + int(bhk_diff)
+                
+                # Base score starting at 100
+                score = 100
+                
+                # Location points
+                if direct_match:
+                    score += 40
+                elif cluster_match:
+                    score += 25
+                
+                # Budget points
+                if not budget_diff:
+                    score += 35
+                else:
+                    score += max(0, 20 - budget_penalty)
+                
+                # BHK points
+                if not bhk_diff:
+                    score += 25
+                else:
+                    score += 10
+                
+                # Bonus for fewer differences (1 diff is preferred over 2)
+                if diff_count == 1:
+                    score += 40
+                elif diff_count == 2:
+                    score += 10
+
+                if score > highest_score and score > 50:
                     highest_score = score
                     best_match = r
                     
+                    reason = "mixed"
+                    if loc_diff and not budget_diff and not bhk_diff:
+                        reason = "nearby_location"
+                    elif budget_diff and not loc_diff and not bhk_diff:
+                        reason = "budget_higher"
+                    elif bhk_diff and not loc_diff and not budget_diff:
+                        reason = "bhk_diff"
+                    elif loc_diff and budget_diff and not bhk_diff:
+                        reason = "location_and_budget"
+                    elif loc_diff and bhk_diff and not budget_diff:
+                        reason = "location_and_bhk"
+                    elif budget_diff and bhk_diff and not loc_diff:
+                        reason = "budget_and_bhk"
+                    
+                    best_diag = {
+                        "reason": reason,
+                        "user_loc": location,
+                        "prop_loc": str(r.get("Society_Area", "")).strip(),
+                        "user_budget": budget,
+                        "prop_demand": prop_demand,
+                        "user_bhk": bhk,
+                        "prop_bhk": prop_bhk_val,
+                        "diff_count": diff_count
+                    }
+
             if not best_match: return None
             
             r = best_match
@@ -720,20 +804,22 @@ class GoogleSheetCRM:
                 img = str(r.get(col, "")).strip()
                 if img: images.append(img)
             
+            real_id = str(r.get("Property_ID") or r.get("Property_ID ") or r.get("Property ID") or r.get("ID") or "").strip()
             return {
                 "Title": title,
                 "Location": loc,
                 "Price": price,
                 "Description": desc,
-                "ID": str(r.get("Property_ID", "")),
+                "ID": real_id if real_id else "N/A",
                 "Images": images,
                 "Raw_BHK": str(r.get("BHK", "")),
                 "Raw_Budget": r.get("Demand_PKR", 0),
                 "Full_Description": str(r.get("Description", "")),
-                "Amenities": str(r.get("Amenities", ""))
+                "Amenities": str(r.get("Amenities", "")),
+                "diagnostics": best_diag
             }
         except Exception as e:
-            logger.error(f"search_similar_properties error: {e}")
+            logger.error(f"search_similar_properties error: {e}", exc_info=True)
             return None
 
 def format_price_pk(val, is_urdu=False):
@@ -951,13 +1037,14 @@ def save_seller_lead(session, tenant_config, phone):
     name = session.get("user_name", "")
     crm.append_seller_lead(phone, name, ptype, loc, size, bhk, demand)
 
-def execute_property_search(session, tenant_config, wa_token, from_number, tenant_id, chat_hist, is_recommendation=False):
+def execute_property_search(session, tenant_config, wa_token, from_number, tenant_id, chat_hist, is_recommendation=False, user_msg=""):
     if not is_recommendation:
         send_whatsapp_text(tenant_id, from_number, "Property search start kar di gayi hai... 🔍", wa_token)
     
     crm = GoogleSheetCRM(tenant_config.get("property_sheet_name", ""))
     sent_props = session.get("sent_properties", [])
-    exclude_ids = [str(p.get("ID", "")) for p in sent_props]
+    exclude_ids = [str(p.get("ID", "")).strip() for p in sent_props if p.get("ID") and str(p.get("ID", "")).strip() != "N/A"]
+    exclude_signatures = [f"{str(p.get('Title', '')).strip().lower()}|{str(p.get('Location', '')).strip().lower()}" for p in sent_props]
     
     properties = []
     if not is_recommendation:
@@ -968,7 +1055,8 @@ def execute_property_search(session, tenant_config, wa_token, from_number, tenan
             bhk=session.get("bhk"),
             budget=session.get("budget"),
             limit=10,
-            exclude_ids=exclude_ids
+            exclude_ids=exclude_ids,
+            exclude_signatures=exclude_signatures
         )
     elif session.get("recommended_property"):
         properties = [session["recommended_property"]]
@@ -983,7 +1071,7 @@ def execute_property_search(session, tenant_config, wa_token, from_number, tenan
         price = format_price_pk(raw_p) if raw_p and raw_p != 'N/A' else raw_p
         loc = p.get('Location', session.get('location', 'N/A'))
         desc = p.get('Description', '')
-        prop_id = p.get('ID', f"ID-1")
+        prop_id = p.get('ID') or "N/A"
         images = p.get('Images', [])
         bhk_val = p.get('Raw_BHK', '')
         
@@ -1042,7 +1130,8 @@ def execute_property_search(session, tenant_config, wa_token, from_number, tenan
         
         time.sleep(2.0) # Ensure images arrive before buttons
         after_msg = "Inmein se koi pasand aaya ya mazeed options dekhne hain? 👇"
-        buttons = ["Sasta option 📉", "Koi aur option 🔄", {"id": f"visit_{prop_id}", "title": "Visit karna 📅"}]
+        btn_visit_id = f"visit_{prop_id}" if prop_id and prop_id != "N/A" else "visit_active"
+        buttons = ["Sasta option 📉", "Koi aur option 🔄", {"id": btn_visit_id, "title": "Visit karna 📅"}]
         send_whatsapp_buttons(tenant_id, from_number, after_msg, buttons, wa_token)
         
         chat_hist.append({"role": "assistant", "content": f"Sent {len(properties)} properties."})
@@ -1054,34 +1143,67 @@ def execute_property_search(session, tenant_config, wa_token, from_number, tenan
             purpose=session.get("purpose"),
             exclude_ids=exclude_ids,
             budget=session.get("budget"),
-            bhk=session.get("bhk")
+            bhk=session.get("bhk"),
+            exclude_signatures=exclude_signatures
         )
         
         if rec:
-            # HARD BUDGET CAP: Never recommend property > 130% of user budget
-            user_budget = session.get("budget")
-            if user_budget:
-                try:
-                    rec_price = int(str(rec.get("Raw_Budget", 0)).replace(",", ""))
-                    if rec_price > user_budget * 1.3:
-                        logger.info(f"🚫 Budget cap blocked recommendation: property={rec_price}, budget={user_budget}, cap={user_budget * 1.3}")
-                        rec = None  # Kill the recommendation
-                except:
-                    pass
-        
-        if rec:
             session["recommended_property"] = rec
-            b_diff = f"Demand {format_price_pk(rec.get('Raw_Budget'))} hai"
-            if rec.get("Raw_BHK") and str(session.get("bhk")) != str(rec.get("Raw_BHK")):
-                b_diff = f"ismein {rec.get('Raw_BHK')} bedrooms hain aur {b_diff}"
-            rec_loc = rec.get("Location") or session.get("location") or "Karachi"
+            diag = rec.get("diagnostics", {})
+            reason = diag.get("reason", "mixed")
+            u_loc = str(session.get("location") or "is ilaqay").title()
+            p_loc = str(diag.get("prop_loc") or rec.get("Location") or "Karachi").title()
+            u_b_val = session.get("budget")
+            p_b_val = rec.get("Raw_Budget")
+            u_b_str = format_price_pk(u_b_val) if u_b_val else ""
+            p_b_str = format_price_pk(p_b_val) if p_b_val else ""
+            u_bhk = session.get("bhk")
+            p_bhk = diag.get("prop_bhk")
+            ptype = str(session.get("property_type") or "ghar").lower()
+            ptype_display = "ghar" if ptype in ["house", "bangla", "ghar"] else ("flat" if ptype in ["flat", "apartment"] else ("plot" if ptype == "plot" else ptype))
+
+            # Detect Urdu script from recent conversation
+            is_urdu_script = False
+            if user_msg:
+                is_urdu_script = bool(re.search(r'[\u0600-\u06FF]', user_msg))
+            elif chat_hist:
+                last_u = next((m.get("content", "") for m in reversed(chat_hist) if m.get("role") == "user"), "")
+                is_urdu_script = bool(re.search(r'[\u0600-\u06FF]', last_u))
+
+            # Smart contextual explanation based on which requirement(s) differed:
+            if is_urdu_script:
+                u_b_pk_u = format_price_pk(u_b_val, is_urdu=True) if u_b_val else ""
+                p_b_pk_u = format_price_pk(p_b_val, is_urdu=True) if p_b_val else ""
+                bhk_u_txt = f"{u_bhk} بیڈ رومز کا " if u_bhk else ""
+
+                if reason == "budget_higher":
+                    msg = f"جناب، آپ کے بتائے ہوئے بجٹ ({u_b_pk_u}) کے اندر {u_loc} میں {bhk_u_txt}میچ نہیں مل سکا 🔎\n\nلیکن اسی علاقے ({u_loc}) میں ایک بہترین آپشن ملا ہے جس کی ڈیمانڈ تھوڑی سی اوپر ({p_b_pk_u}) ہے۔ اگر کہیں تو میں وہ دکھاؤں؟ یا آپ ضروریات تبدیل کرنا چاہتے ہیں؟"
+                elif reason == "nearby_location":
+                    msg = f"جناب، {u_loc} میں آپ کے بجٹ کے مطابق میچ نہیں مل سکا 🔎\n\nلیکن آپ کے بتائے ہوئے بجٹ اور ضروریات کے مطابق بالکل قریبی علاقے (*{p_loc}*) میں ایک بہترین آپشن ملا ہے (ڈیمانڈ {p_b_pk_u})۔ اگر کہیں تو میں وہ دکھاؤں؟"
+                elif reason == "bhk_diff":
+                    msg = f"جناب، {u_loc} میں {u_bhk} بیڈ رومز کا میچ نہیں مل سکا 🔎\n\nلیکن اسی علاقے میں آپ کے بجٹ کے اندر *{p_bhk} بیڈ رومز* کا ایک بہترین آپشن ملا ہے (ڈیمانڈ {p_b_pk_u})۔ کیا آپ وہ دیکھنا چاہیں گے؟"
+                elif reason == "location_and_budget":
+                    msg = f"جناب، {u_loc} میں آپ کے بجٹ کے مطابق میچ نہیں مل سکا 🔎\n\nخیر اس سے ملتا جلتا ایک بہترین آپشن قریبی علاقے (*{p_loc}*) میں ملا ہے جس کی ڈیمانڈ {p_b_pk_u} ہے۔ اگر کہیں تو میں وہ دکھاؤں؟"
+                else:
+                    msg = f"جناب، آپ کی عین ضروریات کے مطابق میچ نہیں مل سکا 🔎\n\nخیر اس سے ملتا جلتا ایک بہترین آپشن (*{p_loc}*) میں ملا ہے جس کی ڈیمانڈ {p_b_pk_u} ہے۔ اگر کہیں تو میں وہ دکھاؤں؟"
                 
-            if sent_props:
-                msg = f"Janab aapki exact requirements ke mutabiq abhi yahi property thi jo main bhej chuka hu. Kher us se milta julta ek aur option ({rec_loc}) mila hai jismein {b_diff}. Agar kahein to mein wo dikhaun? Ya aap requirements change karna chahte hain?"
+                btn_list = ["ہاں، دکھائیں ✨", "تبدیل کریں 🔄"]
             else:
-                msg = f"Janab aapki exact requirements ke mutabiq match nahi mila, kher us se milta julta ek behtareen option ({rec_loc}) mila hai jismein {b_diff}. Agar kahein to mein wo dikhaun? Ya aap requirements change karna chahte hain?"
-                
-            send_whatsapp_buttons(tenant_id, from_number, msg, ["Haan, dikhao ✨", "Change Req 🔄"], wa_token)
+                bhk_r_txt = f"{u_bhk} bedrooms ka " if u_bhk else ""
+                if reason == "budget_higher":
+                    msg = f"Janab, aapke bataye hue budget ({u_b_str}) ke andar {u_loc} mein {bhk_r_txt}{ptype_display} nahi mil saka 🔎\n\nLekin usi ilaqay ({u_loc}) mein ek behtareen option mila hai jiski Demand thori si ooper ({p_b_str}) hai. Agar kahein toh main wo dikhaun? Ya aap requirements change karna chahte hain?"
+                elif reason == "nearby_location":
+                    msg = f"Janab, {u_loc} mein aapke budget ({u_b_str}) ke mutabiq exact match nahi mila 🔎\n\nLekin aapke budget aur {f'{u_bhk} bedrooms' if u_bhk else 'requirements'} ke mutabiq bilkul qareebi ilaqay (*{p_loc}*) mein ek behtareen option mila hai (Demand {p_b_str}). Agar kahein toh main wo dikhaun? Ya aap requirements change karna chahte hain?"
+                elif reason == "bhk_diff":
+                    msg = f"Janab, {u_loc} mein {u_bhk} bedrooms ka match nahi mil saka 🔎\n\nLekin usi ilaqay mein aapke budget ({u_b_str}) ke andar *{p_bhk} bedrooms* ka ek behtareen option mila hai (Demand {p_b_str}). Kya aap wo dekhna chahenge?"
+                elif reason == "location_and_budget":
+                    msg = f"Janab, {u_loc} mein aapke budget ke mutabiq match nahi mila 🔎\n\nKher us se milta julta ek behtareen option qareebi ilaqay (*{p_loc}*) mein mila hai jiski Demand {p_b_str} hai. Agar kahein toh main wo dikhaun? Ya aap requirements change karna chahte hain?"
+                else:
+                    msg = f"Janab, aapki exact requirements ke mutabiq match nahi mila 🔎\n\nKher us se milta julta ek behtareen option (*{p_loc}*) mein mila hai jiski Demand {p_b_str} hai. Agar kahein toh main wo dikhaun? Ya aap requirements change karna chahte hain?"
+
+                btn_list = ["Haan, dikhao ✨", "Change Req 🔄"]
+
+            send_whatsapp_buttons(tenant_id, from_number, msg, btn_list, wa_token)
             chat_hist.append({"role": "assistant", "content": msg})
         else:
             if sent_props:
@@ -2709,9 +2831,13 @@ Respond in JSON format only:
                         session["funnel_state"] = "AWAITING_VISIT_INFO"
                         
                         if btn_id.startswith("visit_"):
-                            session["active_property"] = btn_id.replace("visit_", "")
+                            raw_vid = btn_id.replace("visit_", "").strip()
+                            if raw_vid and raw_vid not in ["active", "N/A", "prop", ""]:
+                                session["active_property"] = raw_vid
+                            elif session.get("sent_properties"):
+                                session["active_property"] = session["sent_properties"][-1].get("ID") or "N/A"
                         elif not session.get("active_property") and session.get("sent_properties"):
-                            session["active_property"] = session["sent_properties"][0].get("ID")
+                            session["active_property"] = session["sent_properties"][-1].get("ID") or "N/A"
                             
                         known_name = session.get("user_name")
                         if known_name and len(str(known_name).strip()) > 1 and str(known_name).strip().lower() not in ["customer", "janab", "user", "none"]:
